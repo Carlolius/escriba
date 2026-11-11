@@ -5,7 +5,7 @@ description = "Record, transcribe and identify speakers in meetings, locally or 
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "numpy",
     "soundfile>=0.12",          # WAV and Ogg/Opus without ffmpeg (libsndfile ships in the wheel)
