@@ -9,6 +9,8 @@ Record, transcribe and identify speakers in your meetings, on Windows and Linux.
 - **Identify speakers:** by voice, against a per-project voice library that learns every time you review a transcript. Always done locally, also in cloud mode.
 - **Archive:** once a meeting is reviewed, its WAV is compressed to Opus (~15x smaller).
 
+![Recording a meeting: level meters for what plays and for the microphone](docs/screenshots/en/record.png)
+
 It has a browser interface and a terminal menu, both in **English and Spanish**. It follows your system language; change it in *Settings*, in the terminal menu or with `escriba --lang en|es`.
 
 ## Before you record anyone
@@ -76,9 +78,24 @@ The web interface and the terminal menu do the same things and can be used at th
 
 Each command has its own `--help`, e.g. `escriba transcribe --help`.
 
-In the web, the project you work on is chosen in the top bar (type a new name to create one); every page shows that project. *Meetings* lists what's recorded in its folder, with its state, a player and the transcript, and lets you delete a meeting (for instance a test) with its files and, if you want, the voice samples taken from it. *Transcribe* shows the running transcriptions of every project, step by step.
+In the web, the project you work on is chosen in the top bar (type a new name to create one); every page shows that project. *Meetings* lists what's recorded in its folder, with its state, a player and the transcript, and lets you delete a meeting (for instance a test) with its files and, if you want, the voice samples taken from it. *Transcribe* shows the running transcriptions of every project, step by step. The terminal menu has the same *Meetings* list.
 
 Background transcriptions keep going if you close the menu or the browser, and their progress (phase, %, time left) shows on top of the main menu and on the *Transcribe* page. Transcripts with speakers to review appear in *Review*, with a few sentences from each speaker so you can tell who it is without listening.
+
+### Screenshots
+
+Made with invented demo data.
+
+<table>
+<tr>
+<td><img src="docs/screenshots/en/meetings.png" alt="Meetings of a project and their state"></td>
+<td><img src="docs/screenshots/en/transcribe.png" alt="Transcriptions running, step by step"></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/en/review.png" alt="Reviewing who each voice is"></td>
+<td><img src="docs/screenshots/en/people.png" alt="Auditing the voice library"></td>
+</tr>
+</table>
 
 ## Your data
 

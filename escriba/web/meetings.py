@@ -2,9 +2,9 @@
 listening to it, reading its transcript and deleting it (for instance a test)."""
 from nicegui import run, ui
 
-from .. import jobs, meetings, voiceprints
+from .. import meetings, voiceprints
 from ..i18n import N_, _, _n
-from .common import file_player, frame, no_project, project_dir, title, transcribe_dialog
+from .common import file_player, frame, no_project, project_dir, shown_path, title, transcribe_dialog
 
 STATUS = {  # text, color, icon
     "recording": (N_("Recording"), "negative", "fiber_manual_record"),
@@ -28,7 +28,7 @@ def page():
             return
         with ui.row().classes("w-full items-center gap-2"):
             ui.icon("folder", color="primary")
-            ui.label(project_dir(project)).classes("font-mono text-sm break-all")
+            ui.label(shown_path(project_dir(project))).classes("font-mono text-sm break-all")
             ui.space()
             shown = ui.toggle({key: _(text) for key, text in FILTERS.items()}, value="all",
                               on_change=lambda: draw()).props("no-caps rounded unelevated")
@@ -64,9 +64,7 @@ def page():
                 ui.icon(icon, color=color, size="sm")
                 with ui.column().classes("grow gap-0 min-w-0"):
                     ui.label(audio.stem).classes("font-medium break-all")
-                    meta = [m["date"].strftime("%Y-%m-%d %H:%M")]
-                    if m["duration"]:
-                        meta.append(jobs.format_minutes(m["duration"]))
+                    meta = [m["date"].strftime("%Y-%m-%d %H:%M")]  # the length is on the player
                     if m["archived"]:
                         meta.append(_("archived (Opus)"))
                     ui.label(" · ".join(meta)).classes("text-sm soft-text")

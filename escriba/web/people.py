@@ -8,10 +8,12 @@ from ..i18n import N_, _, _n
 from .common import choose_path, confirm, frame, no_project, player, project_dir
 
 EXPLANATION = {
-    "confusion": N_("Two people with very similar samples: risk of mixing them up. If it's the same person, "
-                    "move the sample; if a sample is bad, delete it."),
+    "confusion": N_("Two people with very similar samples: risk of mixing them up. Listen to both: if a sample "
+                    "is under the wrong person, click its name and change it; if it's bad (noise, two voices), "
+                    "delete it."),
     "duplicate": N_("Two almost identical samples of the same person: you can delete one."),
-    "spread": N_("Two samples of the same person that don't look alike: one may be someone else."),
+    "spread": N_("Two samples of the same person that don't look alike: one may be someone else. Listen to both "
+                 "and, if so, click its name and change it."),
 }
 KIND = {"confusion": N_("Possible confusion"), "duplicate": N_("Almost duplicate samples"),
         "spread": N_("Spread-out samples")}
@@ -48,6 +50,8 @@ def page():
                 audit = ui.column().classes("w-full gap-3")
 
 
+    skipped = set()  # findings dismissed during this visit
+
     async def reload():
         p = current
         data, findings = await run.io_bound(lambda: (voiceprints.load_samples(p), voiceprints.audit_library(p)))
@@ -75,7 +79,8 @@ def page():
                                   on_click=lambda n=name: delete_person(p, n)).props("flat no-caps")
 
     def draw_audit(p, findings, data):
-        todo = voiceprints.most_urgent_first(findings)
+        todo = voiceprints.most_urgent_first(
+            [f for f in findings if (f["kind"], f["id_a"], f["id_b"]) not in skipped])
         audit_tab.props(f'label="{_("Audit")} ({len(todo)})"' if todo else f'label="{_("Audit")}"')
         audit.clear()
         with audit:
@@ -89,48 +94,32 @@ def page():
     def _finding_card(p, f, data):
         color = "negative" if f["kind"] == "confusion" and f["similarity"] >= voiceprints.DEFAULT_THRESHOLD \
             else "orange"
-        samples = {}
-        with ui.card().classes("w-full gap-2"):
+        with ui.card().classes("w-full gap-3"):
             with ui.row().classes("w-full items-center gap-2"):
                 ui.badge(_(KIND[f["kind"]]), color=color)
                 ui.label(_("likeness {similarity:.2f}", similarity=f["similarity"])).classes("soft-text")
-                ui.space()
-                ui.button(icon="close", on_click=lambda: mark_ok(p, f)).props("flat round dense") \
-                    .tooltip(_("It's fine like this: don't flag this case again"))
             ui.label(_(EXPLANATION[f["kind"]])).classes("text-sm soft-text")
-            for number, side in ((1, "a"), (2, "b")):
+            for side, other in (("a", "b"), ("b", "a")):
                 name, sample_id = f[f"name_{side}"], f[f"id_{side}"]
                 sample = next((s for s in data.get(name, []) if s["id"] == sample_id), None)
-                samples[number] = (name, sample_id, sample)
-                with ui.row().classes("w-full items-center gap-2"):
-                    ui.badge(str(number), color="grey-6").props("rounded")
-                    ui.label(name).classes("font-medium w-32")
+                # In a confusion the likely fix is giving the sample the other name: it's suggested
+                suggestion = f[f"name_{other}"] if f["kind"] == "confusion" else ""
+                with ui.row().classes("w-full items-center gap-3 py-1 line-below no-wrap"):
+                    ui.button(name, icon="edit",
+                              on_click=lambda n=name, i=sample_id, sg=suggestion: move(p, n, i, data, sg)) \
+                        .props("outline no-caps dense").classes("px-2 shrink-0") \
+                        .tooltip(_("Whose voice is this? Change the name of this sample"))
                     if sample:
                         player(sample.get("origin"))
-            with ui.button(_("Fix"), icon="build").props("unelevated no-caps"):
-                with ui.menu():
-                    _fixes(p, f, samples, data)
-
-    def _fixes(p, f, samples, data):
-        """The ways of fixing a finding, as menu items."""
-        (name_1, id_1, s1), (name_2, id_2, s2) = samples[1], samples[2]
-        if f["kind"] == "confusion":
-            if s1:
-                ui.menu_item(_("Sample 1 is {name}'s", name=name_2),
-                             on_click=lambda: move_to(p, name_1, id_1, name_2))
-            if s2:
-                ui.menu_item(_("Sample 2 is {name}'s", name=name_1),
-                             on_click=lambda: move_to(p, name_2, id_2, name_1))
-        else:
-            for number, (name, sample_id, sample) in samples.items():
-                if sample:
-                    ui.menu_item(_("Sample {number} is someone else's...", number=number),
-                                 on_click=lambda n=name, i=sample_id: move(p, n, i, data))
-        ui.separator()
-        for number, (name, sample_id, sample) in samples.items():
-            if sample:
-                ui.menu_item(_("Delete sample {number}", number=number),
-                             on_click=lambda n=name, i=sample_id: delete_sample(p, n, i))
+                        ui.space()
+                        ui.button(icon="delete", color="negative",
+                                  on_click=lambda n=name, i=sample_id: delete_sample(p, n, i)) \
+                            .props("flat round dense").tooltip(_("Delete this sample"))
+            with ui.row().classes("gap-2"):
+                ui.button(_("It's fine like this"), icon="done", on_click=lambda: mark_ok(p, f)) \
+                    .props("unelevated no-caps").tooltip(_("Don't flag this case again"))
+                ui.button(_("Dismiss for now"), icon="close", on_click=lambda: skip(f)).props("flat no-caps") \
+                    .tooltip(_("It shows up again next time"))
 
     def _sample_actions(p, name, sample_id, data):
         with ui.button(icon="more_vert").props("flat round dense"):
@@ -138,10 +127,10 @@ def page():
                 ui.menu_item(_("It's someone else's..."), on_click=lambda: move(p, name, sample_id, data))
                 ui.menu_item(_("Delete this sample"), on_click=lambda: delete_sample(p, name, sample_id))
 
-    async def move(p, name, sample_id, data):
+    async def move(p, name, sample_id, data, suggestion=""):
         with ui.dialog() as d, ui.card().classes("w-96 max-w-full"):
             ui.label(_("This sample is under {name}. Whose is it?", name=name))
-            new = ui.input(_("Person"), autocomplete=sorted(data)).classes("w-full")
+            new = ui.input(_("Person"), value=suggestion, autocomplete=sorted(data)).classes("w-full")
             with ui.row().classes("w-full justify-end"):
                 ui.button(_("Cancel"), on_click=lambda: d.submit(None)).props("flat")
                 ui.button(_("Move"), on_click=lambda: d.submit((new.value or "").strip()))
@@ -187,6 +176,10 @@ def page():
             await run.io_bound(voiceprints.delete_person, p, name)
             ui.notify(_("{name} deleted (can be undone)", name=name), type="positive")
             await reload()
+
+    async def skip(f):
+        skipped.add((f["kind"], f["id_a"], f["id_b"]))
+        await reload()
 
     async def mark_ok(p, f):
         await run.io_bound(voiceprints.mark_as_ok, p, f["kind"], f["id_a"], f["id_b"])

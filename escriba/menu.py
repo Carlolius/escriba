@@ -15,8 +15,9 @@ from rich.markup import escape
 from rich.table import Table
 
 from . import audio as audio_util
-from . import config, i18n, jobs, record, review, voiceprints
-from .i18n import _, _n
+from . import config, i18n, jobs, meetings, record, review, voiceprints
+from .i18n import N_, _, _n
+from .paths import shown_path
 from .transcribe import local_available, missing_key
 
 console = Console()
@@ -264,6 +265,118 @@ def show_jobs():
     return n
 
 
+# ── Meetings ─────────────────────────────────────────────────────────────────
+
+STATUS = {
+    "recording": N_("Recording"), "transcribing": N_("Transcribing"), "untranscribed": N_("Not transcribed"),
+    "to_review": N_("Speakers to review"), "reviewed": N_("Reviewed"),
+}
+STATUS_STYLE = {"recording": "red", "transcribing": "cyan", "untranscribed": "dim", "to_review": "yellow",
+                "reviewed": "green"}
+
+
+def _length(seconds):
+    if not seconds:
+        return "-"
+    seconds = round(seconds)
+    h, m, s = seconds // 3600, seconds // 60 % 60, seconds % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _meeting_label(m):
+    return f"{m['audio'].stem}  ({_(STATUS[m['status']])})"
+
+
+def _play_meeting(audio, duration):
+    start = questionary.text(_("From which minute? (0 = the start; Ctrl+C stops it)"), default="0").ask()
+    try:
+        start = max(0.0, float((start or "0").replace(",", ".")) * 60)
+    except ValueError:
+        return
+    play_sample({"audio": str(audio), "start": start, "end": duration or start + 3600})
+
+
+def _delete_meeting(audio):
+    files = meetings.files_of(audio)
+    console.print(_("These files will be deleted:"))
+    for f in files:
+        console.print("  · " + escape(f.name))
+    if not questionary.confirm(_("Delete {name}?", name=audio.stem), default=False).ask():
+        return False
+    samples = sum(voiceprints.samples_from_audio(audio).values())
+    delete_samples = False
+    if samples:
+        console.print(_n("{n} voice sample was taken from this meeting.",
+                         "{n} voice samples were taken from this meeting.", samples))
+        delete_samples = questionary.confirm(_("Delete them too (otherwise they stay, but can't be played)"),
+                                             default=False).ask()
+    n_files, n_samples = meetings.delete(audio, bool(delete_samples))
+    text = _n("{n} file deleted", "{n} files deleted", n_files)
+    if n_samples:
+        text += " · " + _n("{n} sample deleted (can be undone in People)",
+                           "{n} samples deleted (can be undone in People)", n_samples)
+    console.print("[green]✓[/green] " + text)
+    return True
+
+
+def _meeting(project, m):
+    audio = m["audio"]
+    while True:
+        status = meetings.status(audio, jobs.running_audio())
+        options = [_choice(_("Play"), "play")]
+        if audio.with_suffix(".txt").exists():
+            options.append(_choice(_("See transcript"), "read"))
+        if status == "untranscribed":
+            options.append(_choice(_("Transcribe"), "transcribe"))
+        if status == "to_review":
+            options.append(_choice(_("Review speakers"), "review"))
+        if status != "transcribing":
+            options.append(_choice(_("Delete..."), "delete"))
+        options.append(_choice(_("Back"), BACK))
+        action = _select(_meeting_label(dict(m, status=status)) + ":", choices=options).ask()
+        if action in (None, BACK):
+            return
+        if action == "play":
+            _play_meeting(audio, m["duration"])
+        elif action == "read":
+            with console.pager():
+                console.print(escape(audio.with_suffix(".txt").read_text(encoding="utf-8", errors="replace")))
+        elif action == "transcribe":
+            _transcribe(project, audio)
+        elif action == "review":
+            review_sidecar(audio.with_name(audio.stem + review.SUFFIX), project)
+        elif action == "delete" and _delete_meeting(audio):
+            return
+
+
+def meetings_menu():
+    project = choose_project()
+    if not project:
+        return
+    folder = _project_dir(project)
+    while True:
+        found = meetings.list_meetings(folder)
+        if not found:
+            console.print("[dim]" + escape(_("No meetings in {folder}.", folder=shown_path(folder))) + "[/dim]")
+            return
+        console.print("[dim]" + escape(shown_path(folder)) + "[/dim]")
+        table = Table(title=_("Meetings of {project}", project=project))
+        for col in (_("Meeting"), _("Date"), _("Length"), _("State")):
+            table.add_column(col)
+        for m in found:
+            style = STATUS_STYLE[m["status"]]
+            table.add_row(escape(m["audio"].stem), m["date"].strftime("%Y-%m-%d %H:%M"),
+                          _length(m["duration"]),
+                          f"[{style}]{_(STATUS[m['status']])}[/{style}]")
+        console.print(table)
+        choice = _select(_("Which meeting?"), choices=[_choice(_meeting_label(m), i) for i, m in enumerate(found)]
+                         + [_choice(_("Back to the main menu"), BACK)]).ask()
+        if choice in (None, BACK):
+            return
+        _meeting(project, found[choice])
+        console.print()
+
+
 # ── Review speakers ──────────────────────────────────────────────────────────
 
 def show_clusters(sidecar):
@@ -487,6 +600,30 @@ def _people_browse(project):
             _manage_sample(project, name, sample_id)
 
 
+def _people_rename(project):
+    data = voiceprints.load_samples(project)
+    if not data:
+        _no_voices(project)
+        return
+    name = _select(_("Rename whom?"), choices=sorted(data) + [_choice(_("Cancel"), BACK)]).ask()
+    if name in (None, BACK):
+        return
+    new = (questionary.text(_("New name for {name}", name=name), default=name).ask() or "").strip()
+    if not new or new == name:
+        return
+    if new in data and not questionary.confirm(
+            _("{name} already exists: their samples will be joined (same person).", name=new) + " " + _("Go on?"),
+            default=True).ask():
+        return
+    voiceprints.rename_person(project, name, new)
+    text = _("{old} is now {new}", old=name, new=new)
+    if questionary.confirm(_("Also change it in this project's transcripts"), default=True).ask():
+        n = review.rename_in_transcripts(project, name, new)
+        if n:
+            text += " · " + _n("changed in {n} meeting", "changed in {n} meetings", n)
+    console.print("[green]✓[/green] " + escape(text))
+
+
 def _people_delete(project):
     data = voiceprints.load_library(project)
     if not data:
@@ -618,6 +755,7 @@ def people_menu():
         (_("Correct speakers (recent transcript)"), lambda: review_speakers(only_project=project)),
         (_("Browse by person (play / move / delete)"), lambda: _people_browse(project)),
         (_("Add a sample by hand"), lambda: _people_enroll(project)),
+        (_("Rename a person"), lambda: _people_rename(project)),
         (_("Delete a whole person"), lambda: _people_delete(project)),
         (_("Undo the last delete or move"), lambda: _people_undo(project)),
         (_("Repair paths (audio moved to another folder)"), _people_repair),
@@ -658,6 +796,7 @@ def main():
             _n("({n} pending)", "({n} pending)", n) if n else _("(nothing pending)"))
         options = [
             (_("Record a meeting"), do_record),
+            (_("Meetings"), meetings_menu),
             (_("Transcribe + identify"), do_transcribe),
             (review_title, review_speakers),
             (_("People"), people_menu),

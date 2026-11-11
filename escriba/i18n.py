@@ -69,14 +69,14 @@ def _catalog(lang):
         return {}
 
 
-def _(text, **values):
+def _(text, /, **values):
     lang = language()
     if lang != "en":
         text = _catalog(lang).get(text, text)
     return text.format(**values) if values else text
 
 
-def _n(singular, plural, n, **values):
+def _n(singular, plural, n, /, **values):
     """Plural forms (English and Spanish share the rule: 1 vs. the rest).
     The catalog stores both forms under the singular: "x": ["sing", "plural"]."""
     forms = (singular, plural)

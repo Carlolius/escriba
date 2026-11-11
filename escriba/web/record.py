@@ -8,7 +8,7 @@ from nicegui import run, ui
 
 from .. import config, jobs, record
 from ..i18n import _
-from .common import choose_path, frame, no_project, project_dir, title, transcribe_dialog
+from .common import choose_path, frame, no_project, project_dir, shown_path, title, transcribe_dialog
 
 # One sound card: the recording belongs to the server, not to the tab. It goes
 # on if the browser is closed, and any tab can stop it.
@@ -66,6 +66,7 @@ def meters_html(history, rms, names):
 @ui.page("/")
 def page():
     with frame("/") as project:
+        folder = {"path": project_dir(project) if project else ""}
         ui.add_css(METER_CSS)
         title(_("Record a meeting"),
               _("Records what plays on the PC (the people on the call) and your microphone, mixed."))
@@ -77,7 +78,8 @@ def page():
                 description = ui.input(_("Description"), placeholder=_("weekly_followup")).classes("grow")
             with ui.row().classes("items-center gap-2"):
                 ui.icon("folder", color="primary")
-                folder = ui.label(project_dir(project) if project else "").classes("font-mono text-sm break-all")
+                folder_label = ui.label(shown_path(folder["path"]) if project else "") \
+                    .classes("font-mono text-sm break-all")
                 ui.button(_("Change"), on_click=lambda: change_folder()).props("flat dense no-caps")
             with ui.row().classes("items-center gap-2 text-sm soft-text"):
                 ui.icon("campaign", color="warning")
@@ -113,7 +115,8 @@ def page():
             return
         if path := await choose_path(project_dir(project)):
             config.set_project_dir(project, path)
-            folder.set_text(str(path))
+            folder["path"] = str(path)
+            folder_label.set_text(shown_path(path))
 
     async def start():
         if not project:
@@ -121,7 +124,7 @@ def page():
             return
         if STATE["recording"]:
             return
-        target = Path(folder.text) / f"{record.default_name(description.value or '')}.wav"
+        target = Path(folder["path"]) / f"{record.default_name(description.value or '')}.wav"
         if target.exists():
             ui.notify(_("{name} already exists: change the description", name=target.name), type="warning")
             return
@@ -136,7 +139,7 @@ def page():
             button.enable()
         if warning:
             ui.notify(warning, type="warning")
-        config.set_project_dir(project, folder.text)
+        config.set_project_dir(project, folder["path"])
         STATE.update(recording=r, project=project, last=None)
         for h in history.values():
             h.clear()

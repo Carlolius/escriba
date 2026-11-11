@@ -9,6 +9,8 @@ Graba, transcribe e identifica quién habla en tus reuniones, en Windows y Linux
 - **Identificar hablantes:** por la voz, contra una librería de voces de cada proyecto que aprende cada vez que revisas una transcripción. Siempre se hace en tu PC, también en modo nube.
 - **Archivar:** cuando una reunión está revisada, su WAV se comprime a Opus (~15 veces menos).
 
+![Grabando una reunión: medidores de nivel de lo que suena y del micrófono](docs/screenshots/es/record.png)
+
 Tiene interfaz en el navegador y menú en la terminal, los dos en **castellano e inglés**. Sigue el idioma del sistema; se cambia en *Ajustes*, en el menú de la terminal o con `escriba --lang es|en`.
 
 ## Antes de grabar a nadie
@@ -76,9 +78,24 @@ La web y el menú de la terminal hacen lo mismo y se pueden usar a la vez. La we
 
 Cada orden tiene su propia ayuda, p. ej. `escriba transcribe --help`. Los nombres de las órdenes están en inglés en los dos idiomas; la ayuda sale en el tuyo.
 
-En la web, el proyecto con el que trabajas se elige en la barra de arriba (escribe un nombre nuevo para crearlo); todas las páginas muestran ese proyecto. *Reuniones* lista lo grabado en su carpeta, con su estado, un reproductor y la transcripción, y permite borrar una reunión (por ejemplo una prueba) con sus archivos y, si quieres, las muestras de voz que salieron de ella. *Transcribir* muestra paso a paso las transcripciones en marcha de todos los proyectos.
+En la web, el proyecto con el que trabajas se elige en la barra de arriba (escribe un nombre nuevo para crearlo); todas las páginas muestran ese proyecto. *Reuniones* lista lo grabado en su carpeta, con su estado, un reproductor y la transcripción, y permite borrar una reunión (por ejemplo una prueba) con sus archivos y, si quieres, las muestras de voz que salieron de ella. *Transcribir* muestra paso a paso las transcripciones en marcha de todos los proyectos. El menú de la terminal tiene la misma lista de *Reuniones*.
 
 Las transcripciones en segundo plano siguen aunque cierres el menú o el navegador, y su progreso (fase, %, tiempo que queda) sale arriba del menú principal y en la página *Transcribir*. Las transcripciones con hablantes por revisar aparecen en *Revisar*, con unas frases de cada uno para saber quién es sin tener que escuchar.
+
+### Capturas
+
+Hechas con datos de demostración inventados.
+
+<table>
+<tr>
+<td><img src="docs/screenshots/es/meetings.png" alt="Reuniones de un proyecto y su estado"></td>
+<td><img src="docs/screenshots/es/transcribe.png" alt="Transcripciones en marcha, paso a paso"></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/es/review.png" alt="Revisar quién es cada voz"></td>
+<td><img src="docs/screenshots/es/people.png" alt="Auditoría de la librería de voces"></td>
+</tr>
+</table>
 
 ## Tus datos
 

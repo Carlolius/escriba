@@ -7,7 +7,7 @@ from nicegui import run, ui
 
 from .. import config, jobs
 from ..i18n import N_, _
-from .common import choose_path, frame, no_project, project_dir, title, transcribe_dialog
+from .common import choose_path, frame, no_project, project_dir, shown_path, title, transcribe_dialog
 
 STEP_NAMES = {"compress": N_("Compress"), "upload": N_("Upload"), "cloud": N_("In the cloud"),
               "transcribe": N_("Transcribe"), "speakers": N_("Who speaks")}
@@ -94,6 +94,7 @@ def _review(job):
 @ui.page("/transcribe")
 def page():
     with frame("/transcribe") as project:
+        folder = {"path": ""}
         title(_("Transcribe"))
         ui.label(_("Running")).classes("text-lg font-medium -mb-2")
         running = ui.column().classes("w-full gap-3")
@@ -107,7 +108,7 @@ def page():
                     .props("flat no-caps")
             with ui.row().classes("items-center gap-2"):
                 ui.icon("folder", color="primary")
-                folder = ui.label().classes("font-mono text-sm break-all")
+                folder_label = ui.label().classes("font-mono text-sm break-all")
                 ui.button(_("Change"), on_click=lambda: change_folder()).props("flat dense no-caps")
             listing = ui.column().classes("w-full gap-1")
         waiting.visible = project is not None
@@ -115,11 +116,12 @@ def page():
     async def load():
         if not project:
             return
-        folder.set_text(project_dir(project))
+        folder["path"] = project_dir(project)
+        folder_label.set_text(shown_path(folder["path"]))
         listing.clear()
         with listing:
             ui.spinner()
-        todo = await run.io_bound(jobs.untranscribed, folder.text)
+        todo = await run.io_bound(jobs.untranscribed, folder["path"])
         listing.clear()
         with listing:
             if not todo:
@@ -128,7 +130,7 @@ def page():
                 with ui.row().classes("w-full items-center gap-3 py-1 line-below"):
                     ui.icon("graphic_eq", color="primary")
                     with ui.column().classes("grow gap-0"):
-                        ui.label(str(path.relative_to(folder.text))).classes("break-all")
+                        ui.label(str(path.relative_to(folder["path"]))).classes("break-all")
                         date = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
                         ui.label(f"{jobs.format_minutes(dur)} · {date}" if dur else date).classes("text-sm soft-text")
                     ui.button(_("Transcribe"), icon="play_arrow", on_click=lambda p=path: transcribe(p)) \
@@ -140,12 +142,12 @@ def page():
             await draw_running()
 
     async def change_folder():
-        if path := await choose_path(folder.text):
+        if path := await choose_path(folder["path"]):
             config.set_project_dir(project, path)
             await load()
 
     async def other_file():
-        if path := await choose_path(folder.text, folders=False):
+        if path := await choose_path(folder["path"], folders=False):
             await transcribe(path)
 
     # check_jobs() reports each finished job only once: they're kept here to

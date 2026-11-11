@@ -48,3 +48,9 @@ def test_switching_language(lang):
     assert i18n._("Record") == {"en": "Record", "es": "Grabar"}[lang]
     assert i18n._n("{n} pending finding", "{n} pending findings", 2) == {
         "en": "2 pending findings", "es": "2 hallazgos pendientes"}[lang]
+
+
+def test_placeholders_may_share_a_name_with_the_parameters():
+    # A failed job is printed with {name} and {text}: it used to raise TypeError
+    assert i18n._("{text} and {n}", text="a", n=1) == "a and 1"
+    assert i18n._n("{n} {text}", "{n} {text}s", 2, text="x", singular="s", plural="p") == "2 xs"

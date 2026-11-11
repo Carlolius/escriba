@@ -15,6 +15,7 @@ from nicegui import app, run, ui
 from .. import audio as audio_util
 from .. import config, jobs
 from ..i18n import N_, _, _n
+from ..paths import shown_path  # noqa: F401  (the pages import it from here)
 from ..transcribe import local_available, missing_key
 
 SECTIONS = [
