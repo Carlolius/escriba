@@ -67,7 +67,7 @@ def test_web_serves_every_page(data, lang, settings, meeting):
                 break
             except OSError:
                 time.sleep(0.5)
-        for path in ["/", "/meetings", "/transcribe", "/review", "/people", "/settings"]:
+        for path in ["/", "/meetings", "/transcribe", "/review", "/people", "/projects", "/settings"]:
             with urllib.request.urlopen(url + path, timeout=30) as r:
                 assert r.status == 200, path
                 page = r.read().decode("utf-8")

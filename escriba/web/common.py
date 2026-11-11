@@ -180,6 +180,9 @@ def frame(current_path):
         with select.add_slot("prepend"):
             ui.icon("folder_special", color="white", size="xs")
         select.tooltip(_("Project. Pick one, or type a new name and press Enter to create it"))
+        ui.button(icon="edit", on_click=lambda: ui.navigate.to("/projects")) \
+            .props("flat round dense").classes("text-white" + (" bg-white/20" if current_path == "/projects" else "")) \
+            .tooltip(_("Edit projects"))
 
     def refresh_header():
         r = record_page.STATE["recording"]
@@ -220,6 +223,7 @@ def no_project():
         ui.label(_("There are no projects yet")).classes("text-lg font-medium")
         ui.label(_("A project groups the meetings and voices of a client or team. Type a name in the project box "
                    "at the top right and press Enter to create one.")).classes("soft-text")
+        ui.button(_("New project"), icon="add", on_click=lambda: ui.navigate.to("/projects")).props("unelevated")
 
 
 # ── Audio ────────────────────────────────────────────────────────────────────

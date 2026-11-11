@@ -62,7 +62,9 @@ def pending(only_project=None):
     project's last folder. rglob because a project's recordings can end up in
     different subfolders."""
     found = {}
-    for project, folder in config.load_state().get("project_dirs", {}).items():
+    dirs = config.load_state().get("project_dirs", {})
+    existing = set(config.list_projects()) | set(dirs)
+    for project, folder in dirs.items():
         if only_project and project != only_project:
             continue
         folder = Path(folder)
@@ -73,8 +75,10 @@ def pending(only_project=None):
                 data = load(s)
             except (OSError, json.JSONDecodeError):
                 continue
-            if data.get("clusters") and not data.get("reviewed"):  # no voices: nothing to review
-                found[s.resolve()] = data.get("project", project)
+            owner = data.get("project", project)
+            # no voices: nothing to review; a deleted project's meetings neither
+            if data.get("clusters") and not data.get("reviewed") and owner in existing:
+                found[s.resolve()] = owner
     newest = sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
     return [(found[s], s) for s in newest]
 

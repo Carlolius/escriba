@@ -15,7 +15,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from . import audio as audio_util
-from . import config, i18n, jobs, meetings, record, review, voiceprints
+from . import config, i18n, jobs, meetings, projects, record, review, voiceprints
 from .i18n import N_, _, _n, number
 from .paths import shown_path
 from .transcribe import local_available, missing_key
@@ -836,6 +836,64 @@ def people_menu():
         console.print()
 
 
+# ── Projects ─────────────────────────────────────────────────────────────────
+
+def projects_menu():
+    while True:
+        found = projects.summary()
+        for p in found:
+            console.print(f"[bold]{escape(p['name'])}[/bold]  "
+                          + escape(shown_path(p["folder"]) if p["folder"] else _("No folder chosen yet")) + "  [dim]"
+                          + escape(_n("{n} person", "{n} people", p["people"])) + "[/dim]")
+        if found:
+            console.print()
+        choice = _select(_("Projects:"), choices=[
+            _choice(_("New project"), "new"), _choice(_("Rename a project"), "rename"),
+            _choice(_("Change a project's folder"), "folder"), _choice(_("Delete a project"), "delete"),
+            _choice(_("Back to the main menu"), BACK)]).ask()
+        if choice in (None, BACK):
+            return
+        if choice == "new":
+            name = (questionary.text(_("Name of the new project (e.g. client_x):")).ask() or "").strip()
+            if name:
+                try:
+                    config.update_state(last_project=config.create_project(name))
+                except ValueError as e:
+                    console.print(f"[red]{escape(str(e))}[/red]")
+            continue
+        if not found:
+            console.print("[yellow]" + _("There are no projects yet") + "[/yellow]")
+            continue
+        name = _select(_("Which project?"), choices=[p["name"] for p in found] + [_choice(_("Cancel"), BACK)]).ask()
+        if name in (None, BACK):
+            continue
+        try:
+            if choice == "rename":
+                new = (questionary.text(_("Rename {name}", name=name), default=name).ask() or "").strip()
+                if new and new != name:
+                    n = projects.rename(name, new)
+                    text = _("{old} is now {new}", old=name, new=new)
+                    if n:
+                        text += " · " + _n("changed in {n} meeting", "changed in {n} meetings", n)
+                    console.print("[green]✓[/green] " + escape(text))
+            elif choice == "folder":
+                folder = questionary.path(_("Folder of {name}:", name=name), default=_project_dir(name) + os.sep,
+                                          only_directories=True).ask()
+                if folder:
+                    config.set_project_dir(name, Path(folder).expanduser().resolve())
+            elif choice == "delete":
+                people = next(p["people"] for p in found if p["name"] == name)
+                question = _n("Its voice library is deleted: {n} person and their samples. This can't be undone.",
+                              "Its voice library is deleted: {n} people and their samples. This can't be undone.",
+                              people) + " " + _("Go on?")
+                if questionary.confirm(question, default=False).ask():
+                    projects.delete(name)
+                    console.print("[green]✓[/green] " + escape(_("Project {name} deleted", name=name)))
+        except (ValueError, RuntimeError) as e:
+            console.print(f"[red]{escape(str(e))}[/red]")
+        console.print()
+
+
 # ── Main menu ────────────────────────────────────────────────────────────────
 
 def choose_language():
@@ -863,6 +921,7 @@ def main():
             (_("Transcribe + identify"), do_transcribe),
             (review_title, review_speakers),
             (_("People"), people_menu),
+            (_("Projects"), projects_menu),
         ]
         if running:
             options.append((_("Refresh progress"), lambda: None))  # the loop prints the progress again

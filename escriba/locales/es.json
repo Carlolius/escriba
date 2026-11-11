@@ -573,5 +573,38 @@
  "That clip is empty: check the start and the end": "Ese fragmento está vacío: revisa el inicio y el final",
  "{name}: can't read the audio": "{name}: no se puede leer el audio",
  "Can't add it: {error}": "No se puede añadir: {error}",
- "Can't start the transcription: {error}": "No se puede empezar la transcripción: {error}"
+ "Can't start the transcription: {error}": "No se puede empezar la transcripción: {error}",
+ "Projects": "Proyectos",
+ "Projects:": "Proyectos:",
+ "Which project?": "¿Qué proyecto?",
+ "{n} person": [
+  "{n} persona",
+  "{n} personas"
+ ],
+ "New project": "Proyecto nuevo",
+ "Rename a project": "Renombrar un proyecto",
+ "Change a project's folder": "Cambiar la carpeta de un proyecto",
+ "Delete a project": "Borrar un proyecto",
+ "Folder of {name}:": "Carpeta de {name}:",
+ "Its voice library is deleted: {n} person and their samples. This can't be undone.": [
+  "Se borra su biblioteca de voces: {n} persona y sus muestras. No se puede deshacer.",
+  "Se borra su biblioteca de voces: {n} personas y sus muestras. No se puede deshacer."
+ ],
+ "No folder chosen yet": "Sin carpeta elegida todavía",
+ "Rename {name}": "Renombrar {name}",
+ "Project {name} deleted": "Proyecto {name} borrado",
+ "{name} doesn't exist": "{name} no existe",
+ "There's already a project called {name}": "Ya hay un proyecto llamado {name}",
+ "{name} has a transcription running: wait until it ends": "{name} tiene una transcripción en marcha: espera a que termine",
+ "Edit projects": "Editar proyectos",
+ "Each project has its own folder and its own voice library.": "Cada proyecto tiene su propia carpeta y su propia biblioteca de voces.",
+ "Rename...": "Renombrar...",
+ "Change folder...": "Cambiar carpeta...",
+ "{n} voice sample": [
+  "{n} muestra de voz",
+  "{n} muestras de voz"
+ ],
+ "The recordings and transcripts in {folder} are kept.": "Las grabaciones y transcripciones de {folder} se conservan.",
+ "current": "actual",
+ "Use": "Usar"
 }

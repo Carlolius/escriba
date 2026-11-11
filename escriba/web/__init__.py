@@ -6,7 +6,7 @@ def run(port=8765, open_browser=True):
     from nicegui import app, ui
 
     from .. import i18n
-    from . import meetings, people, record, review, settings, transcribe  # noqa: F401  (they register the pages)
+    from . import meetings, people, projects, record, review, settings, transcribe  # noqa: F401  (they register the pages)
     from .common import COLORS, LOGO, STATIC
 
     from starlette.middleware.trustedhost import TrustedHostMiddleware
