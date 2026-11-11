@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import uuid
+from pathlib import Path
 
 import numpy as np
 
@@ -167,6 +168,53 @@ def move_sample(project, current_name, sample_id, new_name):
     _save(path, data)
     return True
 
+
+def rename_person(project, old_name, new_name):
+    """Renames a person. If new_name already exists, old_name's samples join
+    theirs (it was the same person under two names). Returns the new total of
+    samples, or None if old_name doesn't exist."""
+    path = library_path(project)
+    data = _load(path)
+    if old_name not in data or not new_name or new_name == old_name:
+        return None
+    _backup(path)
+    data.setdefault(new_name, []).extend(data.pop(old_name))
+    _save(path, data)
+    return len(data[new_name])
+
+
+def _from_audio(sample, audio):
+    origin = sample.get("origin")
+    return bool(origin) and Path(origin["audio"]).resolve() == Path(audio).resolve()
+
+
+def samples_from_audio(audio):
+    """{project: n} of the samples taken from this audio, in every library."""
+    found = {}
+    for project in config.list_projects():
+        n = sum(_from_audio(s, audio) for samples in load_samples(project).values() for s in samples)
+        if n:
+            found[project] = n
+    return found
+
+
+def delete_samples_from_audio(audio):
+    """Deletes from every library the samples taken from this audio (one
+    backup per library, so it can be undone). Returns how many it deleted."""
+    total = 0
+    for project in samples_from_audio(audio):
+        path = library_path(project)
+        data = _load(path)
+        _backup(path)
+        for name in list(data):
+            kept = [s for s in data[name] if not _from_audio(s, audio)]
+            total += len(data[name]) - len(kept)
+            if kept:
+                data[name] = kept
+            else:
+                del data[name]
+        _save(path, data)
+    return total
 
 # ── Audit ────────────────────────────────────────────────────────────────────
 

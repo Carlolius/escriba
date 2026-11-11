@@ -100,14 +100,8 @@ def decide(sidecar, spk, new_name, project=None):
     if new_name:
         emb = np.array(info["embedding"], dtype="float32")
         result["samples"], result["added"] = voiceprints.add_sample(project, new_name, emb, origin=info.get("origin"))
-        txt = txt_path(sidecar)
-        if new_name != info["name"] and txt.exists():
-            pattern = rf"^(\[\d+s\]) {re.escape(info['name'])}:$"
-            text, n = re.subn(pattern, lambda m: f"{m.group(1)} {new_name}:",
-                              txt.read_text(encoding="utf-8"), flags=re.MULTILINE)
-            if n:
-                txt.write_text(text, encoding="utf-8")
-            result["renamed"] = n
+        if new_name != info["name"]:
+            result["renamed"] = _rename_in_txt(txt_path(sidecar), info["name"], new_name)
         info["name"] = new_name
         info["unnamed"] = False
 
@@ -143,3 +137,38 @@ def enroll(audio, start, end, name, project):
     emb = VoiceEncoder(verbose=False).embed_utterance(data)
     origin = {"audio": str(Path(audio).resolve()), "start": float(start), "end": float(end)}
     return voiceprints.add_sample(project, name, emb, origin=origin)
+
+
+def _rename_in_txt(txt, old_name, new_name):
+    if not txt.exists():
+        return 0
+    pattern = rf"^(\[\d+s\]) {re.escape(old_name)}:$"
+    text, n = re.subn(pattern, lambda m: f"{m.group(1)} {new_name}:", txt.read_text(encoding="utf-8"),
+                      flags=re.MULTILINE)
+    if n:
+        txt.write_text(text, encoding="utf-8")
+    return n
+
+
+def rename_in_transcripts(project, old_name, new_name):
+    """Changes a person's name in the project's transcripts (.txt and
+    .speakers.json) found in its folder. Returns how many meetings changed."""
+    folder = config.project_dir(project)
+    if not folder or not Path(folder).is_dir():
+        return 0
+    changed = 0
+    for sidecar in Path(folder).rglob("*" + SUFFIX):
+        try:
+            data = load(sidecar)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("project", project) != project:
+            continue
+        clusters = [c for c in data.get("clusters", {}).values() if c.get("name") == old_name]
+        for c in clusters:
+            c["name"] = new_name
+        if clusters:
+            config.write_json(sidecar, data)
+        if _rename_in_txt(txt_path(sidecar), old_name, new_name) or clusters:
+            changed += 1
+    return changed

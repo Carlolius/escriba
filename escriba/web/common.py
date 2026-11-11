@@ -1,5 +1,6 @@
 """Pieces shared by every page: the frame (header and navigation), audio clips,
 the folder browser and the transcribe dialog."""
+import html
 import io
 import os
 import secrets
@@ -7,7 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import soundfile as sf
-from fastapi import Response
+from fastapi import Request, Response
+from fastapi.responses import FileResponse
 from nicegui import app, run, ui
 
 from .. import audio as audio_util
@@ -17,6 +19,7 @@ from ..transcribe import local_available, missing_key
 
 SECTIONS = [
     ("/", N_("Record"), "mic"),
+    ("/meetings", N_("Meetings"), "library_music"),
     ("/transcribe", N_("Transcribe"), "subtitles"),
     ("/review", N_("Review"), "record_voice_over"),
     ("/people", N_("People"), "groups"),
@@ -49,49 +52,149 @@ def translated(options):
 
 # ── Page frame ───────────────────────────────────────────────────────────────
 
-HEADER_COLOR = "#2f4858"
-# In dark mode the ink blue can't be read on black: the primary color (flat
-# buttons, tabs, bars) gets lighter and filled buttons get dark text.
+STATIC = Path(__file__).parent / "static"
+LOGO = STATIC / "logo.svg"
+COLORS = {"primary": "#4f46e5", "secondary": "#f59e0b", "accent": "#0ea5e9",
+          "positive": "#16a34a", "negative": "#dc2626", "warning": "#f59e0b", "info": "#0ea5e9"}
 CSS = """
-.soft-text { color: #5b6770; }
-body.body--dark .soft-text { color: #a9b5bd; }
-body.body--dark { --q-primary: #8db7d1 !important; }  /* NiceGUI sets it inline on <body> */
-body.body--dark .q-btn.bg-primary { color: #10212b !important; }
+:root { --escriba-bg: #f1f2fb; --escriba-card: #ffffff; --escriba-soft: #4b5563; --escriba-line: #e4e6f2; }
+body.body--dark { --escriba-bg: #0e0f1d; --escriba-card: #1a1b2f; --escriba-soft: #aab0c6; --escriba-line: #2c2e48; }
+body { background: var(--escriba-bg) !important; }
+.q-card { background: var(--escriba-card); border-radius: 14px; box-shadow: 0 1px 3px rgb(30 27 75 / 0.08),
+          0 6px 20px -8px rgb(30 27 75 / 0.12); }
+body.body--dark .q-card { box-shadow: 0 1px 3px rgb(0 0 0 / 0.5); }
+.soft-text { color: var(--escriba-soft); }
+.q-tab-panels, .q-tab-panel { background: transparent !important; }
+.q-tab-panel { padding: 8px 0; }
+.line-below { border-bottom: 1px solid var(--escriba-line); }
+.escriba-header { background: linear-gradient(100deg, #1e1b4b 0%, #312e81 45%, #4f46e5 100%); }
+.escriba-header .q-field__native, .escriba-header .q-field__input { color: white; }
+/* In dark mode indigo can't be read on black: lighter primary, dark text on filled buttons */
+body.body--dark { --q-primary: #a5b4fc !important; }  /* NiceGUI sets it inline on <body> */
+body.body--dark .q-btn.bg-primary { color: #1e1b4b !important; }
+.escriba-player { display: inline-flex; align-items: center; gap: 8px; min-width: 12rem; }
+.escriba-player button { border: 0; border-radius: 999px; width: 30px; height: 30px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--q-primary); color: white; flex: none; }
+body.body--dark .escriba-player button { color: #1e1b4b; }
+.escriba-player .track { flex: 1; height: 6px; border-radius: 3px; background: var(--escriba-line);
+  cursor: pointer; overflow: hidden; min-width: 5rem; }
+.escriba-player .bar { height: 100%; width: 0; background: var(--q-primary); border-radius: 3px; }
+.escriba-player .time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--escriba-soft);
+  white-space: nowrap; }
+"""
+# The players are plain HTML: they work in the browser alone, without a round
+# trip to the server for every tick of playback.
+PLAYER_JS = """
+<script>
+window.escribaFmt = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+window.escribaAudio = el => el.closest('.escriba-player').querySelector('audio');
+window.escribaPlay = function (button) {
+  const box = button.closest('.escriba-player'), audio = escribaAudio(button);
+  document.querySelectorAll('.escriba-player audio').forEach(a => { if (a !== audio) a.pause(); });
+  if (!audio.dataset.ready) {
+    audio.dataset.ready = '1';
+    const bar = box.querySelector('.bar'), time = box.querySelector('.time'), icon = button.querySelector('i');
+    const total = parseFloat(box.dataset.duration) || 0;
+    audio.addEventListener('timeupdate', () => {
+      const length = audio.duration && isFinite(audio.duration) ? audio.duration : total;
+      if (length) bar.style.width = (100 * audio.currentTime / length) + '%';
+      time.textContent = escribaFmt(audio.currentTime) + ' / ' + escribaFmt(length);
+    });
+    audio.addEventListener('play', () => icon.textContent = 'pause');
+    audio.addEventListener('pause', () => icon.textContent = 'play_arrow');
+    audio.addEventListener('ended', () => { bar.style.width = '0'; time.textContent = escribaFmt(total); });
+  }
+  audio.paused ? audio.play() : audio.pause();
+};
+window.escribaSeek = function (event, track) {
+  const box = track.closest('.escriba-player'), audio = escribaAudio(track);
+  const length = audio.duration && isFinite(audio.duration) ? audio.duration : parseFloat(box.dataset.duration);
+  const r = track.getBoundingClientRect();
+  if (audio.paused) escribaPlay(box.querySelector('button'));
+  audio.currentTime = length * (event.clientX - r.left) / r.width;
+};
+</script>
 """
 THEMES = {"light": False, "dark": True}  # anything else (system) = None: follow the system
 
 
+def current_project():
+    """The project chosen in the top bar (the last one used), or None if
+    there are none yet."""
+    projects = config.list_projects()
+    last = config.load_state().get("last_project")
+    return last if last in projects else (projects[0] if projects else None)
+
+
+def set_project(name):
+    config.create_project(name)  # does nothing if it exists
+    config.update_state(last_project=name)
+
+
 @contextmanager
 def frame(current_path):
-    """Header with navigation and status (recording, running transcriptions);
-    what's inside the with goes to the central column."""
+    """Header with the logo, navigation, project and status (recording,
+    running transcriptions); what's inside the with goes to the central
+    column. Returns the current project."""
     from . import record as record_page
 
     ui.page_title("Escriba")
     ui.dark_mode(THEMES.get(config.load_state().get("theme")))
     ui.add_css(CSS)
-    with ui.header().classes("items-center gap-1 px-4 py-2").style(f"background-color: {HEADER_COLOR}"):
-        ui.label("Escriba").classes("text-lg font-semibold mr-4")
-        for path, title, icon in SECTIONS:
-            b = ui.button(_(title), icon=icon, on_click=lambda p=path: ui.navigate.to(p)).props("flat no-caps")
-            b.classes("text-white" + (" bg-white/20" if path == current_path else ""))
+    ui.add_head_html(PLAYER_JS)
+    project = current_project()
+    with ui.header().classes("escriba-header items-center flex-nowrap gap-1 px-4 py-2 shadow-md"):
+        with ui.link(target="/").classes("flex items-center gap-2 mr-3 no-underline text-white"):
+            ui.image("/static/logo.svg").classes("w-8 h-8")
+            ui.label("Escriba").classes("text-lg font-semibold tracking-wide max-sm:hidden")
+        for path, text, icon in SECTIONS:
+            with ui.button(icon=icon, on_click=lambda p=path: ui.navigate.to(p)).props("flat no-caps") \
+                    .classes("text-white rounded-lg" + (" bg-white/20" if path == current_path else "")):
+                ui.label(_(text)).classes("ml-2 max-lg:hidden")
+                ui.tooltip(_(text)).classes("lg:hidden")
         ui.space()
-        recording = ui.label().classes("text-white font-medium")
-        running = ui.label().classes("text-white/90 text-sm")
+        with ui.link(target="/").classes("no-underline mr-2") as recording:
+            with ui.row().classes("items-center gap-1 text-white font-medium no-wrap"):
+                ui.icon("fiber_manual_record", color="red-5").classes("animate-pulse")
+                recording_text = ui.label()
+                recording_tip = ui.tooltip()
+        with ui.link(target="/transcribe").classes("no-underline mr-2") as running:
+            with ui.row().classes("items-center gap-1 text-white text-sm no-wrap"):
+                ui.icon("sync").classes("animate-spin")
+                running_text = ui.label()
+                running_tip = ui.tooltip()
+        projects = config.list_projects()
+        select = ui.select(projects, value=project, with_input=True, new_value_mode="add-unique",
+                           on_change=lambda e: _change_project(e.value)) \
+            .props('dense outlined dark color="white" options-dense hide-bottom-space') \
+            .classes("w-44 shrink-0")
+        with select.add_slot("prepend"):
+            ui.icon("folder_special", color="white", size="xs")
+        select.tooltip(_("Project. Pick one, or type a new name and press Enter to create it"))
 
     def refresh_header():
         r = record_page.STATE["recording"]
         recording.visible = r is not None
         if r:
             s = int(r.seconds)
-            recording.set_text(_("● Recording {time}", time=f"{s // 60}:{s % 60:02d}"))
+            recording_text.set_text(f"{s // 60}:{s % 60:02d}")
+            recording_tip.set_text(_("Recording"))
         n = len(jobs.running_audio())
         running.visible = n > 0
-        running.set_text(_n("{n} transcription running", "{n} transcriptions running", n))
+        running_text.set_text(str(n))
+        running_tip.set_text(_n("{n} transcription running", "{n} transcriptions running", n))
 
+    refresh_header()
     ui.timer(1.0, refresh_header)
     with ui.column().classes("w-full max-w-4xl mx-auto p-4 gap-4"):
-        yield
+        yield project
+
+
+def _change_project(name):
+    if name and name != config.load_state().get("last_project"):
+        set_project(name)
+        ui.navigate.reload()
 
 
 def title(text, subtitle=None):
@@ -100,25 +203,55 @@ def title(text, subtitle=None):
         ui.label(subtitle).classes("soft-text -mt-3")
 
 
-# ── Audio clips ──────────────────────────────────────────────────────────────
-# The web never gets paths: each clip shown is registered here under a random
+def no_project():
+    """What a page shows when there isn't any project yet."""
+    with ui.card().classes("w-full items-start gap-2"):
+        ui.label(_("There are no projects yet")).classes("text-lg font-medium")
+        ui.label(_("A project groups the meetings and voices of a client or team. Type a name in the project box "
+                   "at the top right and press Enter to create one.")).classes("soft-text")
+
+
+# ── Audio ────────────────────────────────────────────────────────────────────
+# The web never gets paths: each audio shown is registered here under a random
 # token, and /clip/<token> only serves what's registered.
 
 _CLIPS = {}
 _MAX_CLIPS = 5000
 
 
+def _register(path, start=None, end=None):
+    if len(_CLIPS) > _MAX_CLIPS:
+        _CLIPS.clear()
+    token = secrets.token_urlsafe(16)
+    _CLIPS[token] = (str(path), start, end)
+    return f"/clip/{token}"
+
+
+def _player_html(url, seconds):
+    seconds = max(0, int(round(seconds or 0)))
+    return (f'<div class="escriba-player" data-duration="{seconds}">'
+            f'<audio preload="none" src="{url}"></audio>'
+            f'<button type="button" onclick="escribaPlay(this)" title="{html.escape(_("Play"))}">'
+            f'<i class="q-icon notranslate material-icons" style="font-size:20px">play_arrow</i></button>'
+            f'<div class="track" onclick="escribaSeek(event, this)"><div class="bar"></div></div>'
+            f'<span class="time">{seconds // 60}:{seconds % 60:02d}</span></div>')
+
+
 def player(origin):
-    """ui.audio for {"audio", "start", "end"}, or a note if it can't be played."""
+    """Compact player for a voice sample {"audio", "start", "end"}, with its
+    length shown before playing; or a note if it can't be played."""
     if not origin:
         return ui.label(_("No source audio saved")).classes("text-sm soft-text")
     if not Path(origin["audio"]).exists():
         return ui.label(_("{name} not found", name=Path(origin["audio"]).name)).classes("text-sm soft-text")
-    if len(_CLIPS) > _MAX_CLIPS:
-        _CLIPS.clear()
-    token = secrets.token_urlsafe(16)
-    _CLIPS[token] = (origin["audio"], float(origin["start"]), float(origin["end"]))
-    return ui.audio(f"/clip/{token}").props("preload=none").classes("w-full max-w-sm h-10")
+    start, end = float(origin["start"]), float(origin["end"])
+    return ui.html(_player_html(_register(origin["audio"], start, end), end - start), sanitize=False) \
+        .classes("w-full max-w-xs")
+
+
+def file_player(path, seconds):
+    """Player for a whole audio file (served as is, so it can be long)."""
+    return ui.html(_player_html(_register(path), seconds), sanitize=False).classes("w-full max-w-xs")
 
 
 def _wav_of(path, start, end):
@@ -128,33 +261,38 @@ def _wav_of(path, start, end):
     return buf.getvalue()
 
 
+def _ranged(data, media_type, range_header):
+    """Answers the Range requests browsers send to seek."""
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-store"}
+    if range_header and range_header.startswith("bytes="):
+        first, _sep, last = range_header[6:].split(",")[0].partition("-")
+        try:
+            start = int(first) if first else len(data) - int(last)
+            end = int(last) if first and last else len(data) - 1
+        except ValueError:
+            start, end = 0, len(data) - 1
+        start, end = max(0, start), min(end, len(data) - 1)
+        if start <= end:
+            headers["Content-Range"] = f"bytes {start}-{end}/{len(data)}"
+            return Response(data[start:end + 1], status_code=206, media_type=media_type, headers=headers)
+    return Response(data, media_type=media_type, headers=headers)
+
+
 @app.get("/clip/{token}")
-async def _serve_clip(token: str):
+async def _serve_clip(token: str, request: Request):
     if token not in _CLIPS:
         return Response(status_code=404)
-    data = await run.io_bound(_wav_of, *_CLIPS[token])
-    return Response(data, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+    path, start, end = _CLIPS[token]
+    if start is None:
+        if not Path(path).exists():
+            return Response(status_code=404)
+        media_type = "audio/ogg" if path.lower().endswith(".opus") else "audio/wav"
+        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-store"})
+    data = await run.io_bound(_wav_of, path, start, end)
+    return _ranged(data, "audio/wav", request.headers.get("range"))
 
 
 # ── Project and folders ──────────────────────────────────────────────────────
-
-def project_selector(on_change):
-    """Project select that can also create a new one. Calls on_change(name)."""
-    projects = config.list_projects()
-    last = config.load_state().get("last_project")
-    value = last if last in projects else (projects[0] if projects else None)
-
-    def change(e):
-        if e.value:
-            config.create_project(e.value)  # does nothing if it exists
-            config.update_state(last_project=e.value)
-            on_change(e.value)
-
-    select = ui.select(projects, label=_("Project"), value=value, with_input=True, new_value_mode="add-unique",
-                       on_change=change).classes("min-w-48")
-    select.tooltip(_("Pick one, or type a new name and press Enter to create it"))
-    return select
-
 
 def project_dir(project):
     return config.project_dir(project) or str(Path.home())

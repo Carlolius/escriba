@@ -76,6 +76,8 @@ The web interface and the terminal menu do the same things and can be used at th
 
 Each command has its own `--help`, e.g. `escriba transcribe --help`.
 
+In the web, the project you work on is chosen in the top bar (type a new name to create one); every page shows that project. *Meetings* lists what's recorded in its folder, with its state, a player and the transcript, and lets you delete a meeting (for instance a test) with its files and, if you want, the voice samples taken from it. *Transcribe* shows the running transcriptions of every project, step by step.
+
 Background transcriptions keep going if you close the menu or the browser, and their progress (phase, %, time left) shows on top of the main menu and on the *Transcribe* page. Transcripts with speakers to review appear in *Review*, with a few sentences from each speaker so you can tell who it is without listening.
 
 ## Your data
@@ -131,7 +133,7 @@ Diarization is the bottleneck: almost all its time goes into voice embeddings. S
 
 Each project (client, team...) has its own voice library, created when you create the project. When you review the speakers of a transcript, confirming or correcting a name adds that sample to the person; "I don't know" leaves the library untouched.
 
-In *People* you can play, move or delete samples, delete a person, undo the last change, add a sample by hand, repair paths and audit the library (it flags samples that are too similar between two people, near-duplicates, and samples of the same person that don't match each other).
+In *People* you can play, move or delete samples, rename a person (also in the project's transcripts; if the new name exists, both join), delete a person, undo the last change, add a sample by hand, repair paths and audit the library (it flags samples that are too similar between two people, near-duplicates, and samples of the same person that don't match each other).
 
 ## Development
 
@@ -153,6 +155,7 @@ CI runs the tests on Ubuntu and Windows, and runs `install.ps1` end to end on Wi
 | `speakers.py` | identify voices, write the .txt and .speakers.json |
 | `review.py` | review decisions, feed the library |
 | `voiceprints.py` | voice library and audit |
+| `meetings.py` | a folder's meetings, their state, deleting one |
 | `repair.py` | repair paths of moved meetings |
 | `archive.py` / `audio.py` | Opus, duration, playback |
 | `jobs.py` / `progress.py` | background transcriptions and their progress |

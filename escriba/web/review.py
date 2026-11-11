@@ -3,12 +3,12 @@ from nicegui import run, ui
 
 from .. import review
 from ..i18n import _, _n
-from .common import frame, player, title
+from .common import frame, player, set_project, title
 
 
 @ui.page("/review")
 def page():
-    with frame("/review"):
+    with frame("/review") as current:
         content = ui.column().classes("w-full gap-4")
 
     async def listing():
@@ -17,12 +17,25 @@ def page():
             title(_("Review speakers"), _("Confirming or correcting each voice teaches escriba to recognise it "
                                           "next time."))
             loading = ui.spinner()
-        todo = await run.io_bound(review.pending)
+        everything = await run.io_bound(review.pending)
         loading.delete()
+        todo = [(p, s) for p, s in everything if p == current]
+        others = {}
+        for p, _s in everything:
+            if p != current:
+                others[p] = others.get(p, 0) + 1
         with content:
             if not todo:
-                ui.label(_("No transcripts waiting for review.")).classes("soft-text")
-            with ui.list().props("bordered separator").classes("w-full"):
+                ui.label(_("No transcripts of {project} waiting for review.", project=current)).classes("soft-text")
+            for p, n in sorted(others.items()):
+                with ui.row().classes("items-center gap-2 text-sm"):
+                    ui.icon("info", color="info")
+                    ui.label(_n("{project} has {n} transcript to review", "{project} has {n} transcripts to review",
+                                n, project=p))
+                    ui.button(_("Go to {project}", project=p), on_click=lambda p=p: switch(p)) \
+                        .props("flat dense no-caps")
+            with ui.list().props("bordered separator").classes("w-full rounded-xl") as meetings:
+                meetings.visible = bool(todo)
                 for project, sidecar in todo:
                     with ui.item(on_click=lambda p=project, s=sidecar: meeting(p, s)).props("clickable"):
                         with ui.item_section():
@@ -30,6 +43,10 @@ def page():
                             ui.item_label(project).props("caption")
                         with ui.item_section().props("side"):
                             ui.icon("chevron_right")
+
+    def switch(project):
+        set_project(project)
+        ui.navigate.reload()
 
     async def meeting(project, sidecar):
         content.clear()

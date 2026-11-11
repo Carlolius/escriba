@@ -68,7 +68,8 @@ def start(audio, project, engine="cloud", model="medium", language="auto"):
         proc = subprocess.Popen(command(audio, project, engine, model, language), stdout=f,
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=environment(), **options)
     state = config.load_state()
-    state.setdefault("jobs", []).append({"audio": str(audio), "log": str(log), "pid": proc.pid})
+    state.setdefault("jobs", []).append({"audio": str(audio), "log": str(log), "pid": proc.pid,
+                                         "project": project, "engine": engine})
     config.save_state(state)
     return log
 
@@ -86,49 +87,76 @@ def is_alive(pid):
     return "escriba" in cmd and "transcribe" in cmd
 
 
-def progress_from_log(log):
-    """Text like 'transcribing 45% (step 1/2) · ~38 min left', from the lines
-    progress.py writes to the log."""
+# Steps of each engine, as shown in the web
+STEPS = {"local": ("transcribe", "speakers"), "cloud": ("compress", "upload", "cloud", "speakers")}
+
+
+def progress_info(log, engine=None):
+    """Where a background transcription is, from the lines progress.py and
+    cloud.py write to its log:
+
+    {"engine": "local" | "cloud", "step": one of STEPS[engine],
+     "pct": 0-100 or None (no percentage for this step), "elapsed": seconds
+     or None, "left": estimated seconds to the end or None, "text": the same
+     in one line}"""
     try:
         lines = Path(log).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return _("no log")
+        lines = None
+    if engine not in STEPS:
+        cloud = lines and any(line.startswith(("[cloud]", "[phase] cloud", "[phase] compressing", "[progress] upload",
+                                               "[progress] compress")) for line in lines)
+        engine = "cloud" if cloud else "local"
+    info = {"engine": engine, "step": STEPS[engine][0], "pct": None, "elapsed": None, "left": None}
+    if lines is None:
+        return dict(info, text=_("no log"))
     for line in reversed(lines):
         if m := RE_PHASE.match(line):
-            text = {
-                "cloud_done": _("identifying voices (cloud part done)"),
-                "cloud_waiting": _("processing in the cloud"),
-                "diarizing": _("preparing speaker identification (step 2/2)"),
-                "compressing": _("compressing audio (cloud)"),
-                "loading_model": _("loading model..."),
-            }.get(m.group(1))
+            step, text = {
+                "cloud_done": ("speakers", _("identifying voices (cloud part done)")),
+                "cloud_waiting": ("cloud", _("processing in the cloud")),
+                "diarizing": ("speakers", _("preparing speaker identification (step 2/2)")),
+                "compressing": ("compress", _("compressing audio (cloud)")),
+                "loading_model": ("transcribe", _("loading model...")),
+            }.get(m.group(1), (None, None))
             if text:
-                return text
+                return dict(info, step=step, text=text)
             continue
         if m := RE_CLOUD.match(line):
-            return _("processing in the cloud ({elapsed})", elapsed=m.group(1))
+            minutes, seconds = m.group(1).split(":")
+            return dict(info, step="cloud", elapsed=int(minutes) * 60 + int(seconds),
+                        text=_("processing in the cloud ({elapsed})", elapsed=m.group(1)))
         m = RE_PROGRESS.match(line)
         if not m:
             continue
         key, pct = m.group(1), int(m.group(2))
         elapsed = int(m.group(3)) * 60 + int(m.group(4))
+        info.update(pct=pct, elapsed=elapsed)
         if key == "compress":
-            return _("compressing audio {pct}% (cloud)", pct=pct)
+            return dict(info, step="compress", text=_("compressing audio {pct}% (cloud)", pct=pct))
         if key == "upload":
-            return _("uploading audio {pct}% (cloud)", pct=pct)
+            return dict(info, step="upload", text=_("uploading audio {pct}% (cloud)", pct=pct))
         if key == "transcribe":
             if pct == 0:
-                return _("transcribing 0% (step 1/2)")
+                return dict(info, step="transcribe", text=_("transcribing 0% (step 1/2)"))
             # Left: the rest of the transcription + the whole diarization,
             # estimated from how long the transcription will take.
             total = elapsed * 100 / pct
             left = total - elapsed + total * DIARIZATION_RATIO
-            return _("transcribing {pct}% (step 1/2) · ~{left} left", pct=pct, left=format_minutes(left))
+            return dict(info, step="transcribe", left=left,
+                        text=_("transcribing {pct}% (step 1/2) · ~{left} left", pct=pct, left=format_minutes(left)))
         if key == "segment" or m.group(5) is None:
-            return _("identifying speakers {pct}% (step 2/2)", pct=0 if key == "segment" else pct)
+            pct = 0 if key == "segment" else pct
+            return dict(info, step="speakers", pct=pct, text=_("identifying speakers {pct}% (step 2/2)", pct=pct))
         left = int(m.group(5)) * 60 + int(m.group(6))
-        return _("identifying speakers {pct}% (step 2/2) · ~{left} left", pct=pct, left=format_minutes(left))
-    return _("starting...")
+        return dict(info, step="speakers", left=left,
+                    text=_("identifying speakers {pct}% (step 2/2) · ~{left} left", pct=pct, left=format_minutes(left)))
+    return dict(info, text=_("starting..."))
+
+
+def progress_from_log(log, engine=None):
+    """Text like 'transcribing 45% (step 1/2) · ~38 min left'."""
+    return progress_info(log, engine)["text"]
 
 
 def check_jobs():
@@ -139,7 +167,7 @@ def check_jobs():
     result, still = [], []
     for job in jobs:
         if is_alive(job["pid"]):
-            result.append((job, "running", progress_from_log(job["log"])))
+            result.append((job, "running", progress_from_log(job["log"], job.get("engine"))))
             still.append(job)
         elif Path(job["audio"]).with_suffix(".txt").exists():
             result.append((job, "done", _("ready to review speakers")))

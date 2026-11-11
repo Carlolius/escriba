@@ -51,7 +51,10 @@ def _env_without_pytest(data, lang):
 
 
 @pytest.mark.parametrize("lang, settings", [("en", "Appearance"), ("es", "Apariencia")])
-def test_web_serves_every_page(data, lang, settings):
+def test_web_serves_every_page(data, lang, settings, meeting):
+    # With a project and a meeting, so the pages draw their content and not the "no projects" note
+    config.create_project("test")
+    config.set_project_dir("test", meeting[0].parent)
     port = _free_port()
     proc = subprocess.Popen([sys.executable, "-m", "escriba", "web", "--no-browser", "--port", str(port)],
                             env=_env_without_pytest(data, lang),
@@ -64,7 +67,7 @@ def test_web_serves_every_page(data, lang, settings):
                 break
             except OSError:
                 time.sleep(0.5)
-        for path in ["/", "/transcribe", "/review", "/people", "/settings"]:
+        for path in ["/", "/meetings", "/transcribe", "/review", "/people", "/settings"]:
             with urllib.request.urlopen(url + path, timeout=30) as r:
                 assert r.status == 200, path
                 page = r.read().decode("utf-8")

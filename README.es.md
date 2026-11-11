@@ -76,6 +76,8 @@ La web y el menú de la terminal hacen lo mismo y se pueden usar a la vez. La we
 
 Cada orden tiene su propia ayuda, p. ej. `escriba transcribe --help`. Los nombres de las órdenes están en inglés en los dos idiomas; la ayuda sale en el tuyo.
 
+En la web, el proyecto con el que trabajas se elige en la barra de arriba (escribe un nombre nuevo para crearlo); todas las páginas muestran ese proyecto. *Reuniones* lista lo grabado en su carpeta, con su estado, un reproductor y la transcripción, y permite borrar una reunión (por ejemplo una prueba) con sus archivos y, si quieres, las muestras de voz que salieron de ella. *Transcribir* muestra paso a paso las transcripciones en marcha de todos los proyectos.
+
 Las transcripciones en segundo plano siguen aunque cierres el menú o el navegador, y su progreso (fase, %, tiempo que queda) sale arriba del menú principal y en la página *Transcribir*. Las transcripciones con hablantes por revisar aparecen en *Revisar*, con unas frases de cada uno para saber quién es sin tener que escuchar.
 
 ## Tus datos
@@ -131,7 +133,7 @@ La separación de hablantes es el cuello de botella: casi todo su tiempo se va e
 
 Cada proyecto (cliente, equipo...) tiene su propia librería de voces, que se crea al crear el proyecto. Al revisar los hablantes de una transcripción, confirmar o corregir un nombre añade esa muestra a la persona; "No lo sé" no toca la librería.
 
-En *Personas* puedes escuchar, mover o borrar muestras, borrar a una persona, deshacer el último cambio, añadir una muestra a mano, reparar rutas y auditar la librería (avisa de muestras demasiado parecidas entre dos personas, de casi duplicadas y de muestras de la misma persona que no se parecen entre sí).
+En *Personas* puedes escuchar, mover o borrar muestras, cambiar el nombre de una persona (también en las transcripciones del proyecto; si el nombre nuevo ya existe, se juntan), borrar a una persona, deshacer el último cambio, añadir una muestra a mano, reparar rutas y auditar la librería (avisa de muestras demasiado parecidas entre dos personas, de casi duplicadas y de muestras de la misma persona que no se parecen entre sí).
 
 ## Desarrollo
 
