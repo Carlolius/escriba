@@ -1,6 +1,6 @@
 """Speaker identification by voiceprint (one voice library per project).
 
-Each person may have several samples (resemblyzer embeddings) taken in
+Each person may have several samples (embeddings from encoder.py) taken in
 different recording conditions. Identification uses the highest similarity
 between the cluster's embedding and every saved sample of each person.
 

@@ -69,6 +69,15 @@ def _catalog(lang):
         return {}
 
 
+DECIMAL_COMMA = {"es"}
+
+
+def number(x, digits=1):
+    """A decimal number as written in the interface language: 1.5 / 1,5."""
+    text = f"{x:.{digits}f}"
+    return text.replace(".", ",") if language() in DECIMAL_COMMA else text
+
+
 def _(text, /, **values):
     lang = language()
     if lang != "en":

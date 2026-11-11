@@ -16,10 +16,6 @@ dependencies = [
     "psutil",
     "platformdirs",
     "nicegui>=4",              # web interface
-    # Voice identification (also in cloud mode: it runs locally)
-    "resemblyzer",
-    "webrtcvad-wheels",         # replaces webrtcvad, which needs a compiler on Windows
-    "setuptools<81",            # webrtcvad uses pkg_resources, removed in setuptools 81
 ]
 
 [project.optional-dependencies]
@@ -38,11 +34,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["escriba"]
-
-[tool.uv]
-# resemblyzer asks for "webrtcvad", which has no Windows wheels; webrtcvad-wheels
-# installs the same module. This marker is never true, so it's never installed.
-override-dependencies = ["webrtcvad; sys_platform == 'never'"]
 
 [dependency-groups]
 dev = ["pytest"]

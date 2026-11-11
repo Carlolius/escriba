@@ -16,7 +16,7 @@ from rich.table import Table
 
 from . import audio as audio_util
 from . import config, i18n, jobs, meetings, record, review, voiceprints
-from .i18n import N_, _, _n
+from .i18n import N_, _, _n, number
 from .paths import shown_path
 from .transcribe import local_available, missing_key
 
@@ -85,6 +85,31 @@ def choose_audio(project):
     return path
 
 
+def install_local_mode():
+    """Offers to install local mode (faster-whisper + pyannote). True if it's
+    installed afterwards."""
+    from . import extras
+
+    console.print(_("Local mode is not installed: it needs ~{size} GB of libraries, and then the whisper model "
+                    "the first time it's used.", size=number(extras.SIZE_GB)))
+    if not extras.find_uv():
+        console.print(_("uv was not found, so it can't be installed from here. Install it by hand:"))
+        console.print("  " + escape(extras.manual_command()))
+        return False
+    free = extras.free_gb()
+    if free < extras.NEEDED_GB:
+        console.print(_("[yellow]Only {free} GB free on the disk: about {needed} GB are needed.[/yellow]",
+                        free=number(free), needed=extras.NEEDED_GB))
+    if not questionary.confirm(_("Install it now?"), default=False).ask():
+        return False
+    if extras.install(lambda line: console.print(escape(line), style="dim", highlight=False)):
+        console.print(_("[green]Local mode installed.[/green]"))
+        return True
+    console.print(_("[red]The installation failed.[/red] You can also install it by hand:"))
+    console.print("  " + escape(extras.manual_command()))
+    return False
+
+
 def choose_engine_language():
     """Returns (engine, model, language) or None."""
     engine = _select(
@@ -98,9 +123,7 @@ def choose_engine_language():
     ).ask()
     if engine is None:
         return None
-    if engine == "local" and not local_available():
-        console.print(_("[red]Local mode is not installed[/red] (the 'local' extra is missing: faster-whisper "
-                        "and pyannote)."))
+    if engine == "local" and not local_available() and not install_local_mode():
         return None
     language = _select(
         _("Language spoken:"),

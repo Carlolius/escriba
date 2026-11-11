@@ -14,8 +14,9 @@
     Messages are shown in Spanish if Windows is in Spanish, in English otherwise.
 
 .PARAMETER Local
-    Also installs the "on this PC" mode (faster-whisper and pyannote): 2-3 GB
-    more, and transcribing is slow without an NVIDIA card. Without it, cloud only.
+    Also installs the "on this PC" mode (faster-whisper and pyannote): ~1.5 GB
+    more. It can also be added later from Escriba (Settings), and an update
+    keeps it if it's there. Without it, cloud only.
 
 .PARAMETER Source
     Where to get Escriba from: a folder with the code or the URL of a .zip.
@@ -93,20 +94,21 @@ if (-not $Source) {
 if (Test-Path $Source) {
     $Source = ([System.Uri](Resolve-Path $Source).Path).AbsoluteUri   # C:\x -> file:///C:/x
 }
+# Local mode may have been added later from escriba itself (Settings or
+# `escriba install-local`): keep it when updating
+$installed = Join-Path (uv tool dir).Trim() 'escriba\Lib\site-packages\faster_whisper'
+if (-not $Local -and (Test-Path $installed)) {
+    $Local = $true
+    Write-Host (T 'Local mode is installed: it is kept.' 'El modo local está instalado: se mantiene.')
+}
 $extra = if ($Local) { '[local]' } else { '' }
 $package = "escriba$extra @ $Source"
 
-# resemblyzer asks for webrtcvad, which has to be compiled on Windows; escriba
-# already brings webrtcvad-wheels, which installs the same module prebuilt.
-$exclude = Join-Path $env:TEMP 'escriba-exclude.txt'
-Set-Content -Path $exclude -Value 'webrtcvad' -Encoding ascii
-
 Step "$(T 'Installing Escriba from' 'Instalando Escriba desde') $Source"
 if ($Local) { Write-Host (T 'With local mode: several GB, it may take a good while.' 'Con el modo local: son varios GB, puede tardar un buen rato.') }
-uv tool install --force --python $PythonVersion --excludes $exclude `
+uv tool install --force --python $PythonVersion `
     --reinstall-package escriba --refresh-package escriba $package
 if ($LASTEXITCODE -ne 0) { Fail (T "The installation with uv didn't finish well (see the messages above)." 'La instalación con uv no terminó bien (mira los mensajes de arriba).') }
-Remove-Item $exclude -ErrorAction SilentlyContinue
 
 $exe = Join-Path (uv tool dir --bin).Trim() 'escriba.exe'
 if (-not (Test-Path $exe)) { Fail "$(T "Can't find" 'No encuentro') $exe" }

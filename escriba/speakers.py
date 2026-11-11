@@ -17,7 +17,7 @@ The .speakers.json ("sidecar") holds one cluster per detected voice:
 import json
 import os
 
-from . import voiceprints
+from . import encoder, voiceprints
 from .i18n import _
 
 
@@ -40,12 +40,10 @@ def name_speakers(audio, out, turns, project, speakers):
 
     import numpy as np
     import soundfile as sf
-    from resemblyzer import VoiceEncoder
 
     library = voiceprints.load_library(project)
     if not library:
         print(_("WARNING: project {project} has no saved voices yet: no voice identification", project=project))
-    encoder = VoiceEncoder()
     by_speaker = {}
     for s, e, spk in turns:
         by_speaker.setdefault(spk, []).append((s, e))
@@ -71,7 +69,7 @@ def name_speakers(audio, out, turns, project, speakers):
             unmatched += 1
             names[spk] = _fallback_name(speakers, unmatched)
             continue
-        emb = encoder.embed_utterance(np.concatenate(chunks))
+        emb = encoder.embed(np.concatenate(chunks))
         name, sim = voiceprints.identify(emb, library)
         if name:
             names[spk] = name

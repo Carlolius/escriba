@@ -398,7 +398,7 @@ async def transcribe_dialog(audio, project):
         else:
             text = _("Free and the audio never leaves the PC, but slow.")
         if not local:
-            text += " " + _("The on-this-PC mode is not installed.")
+            text += " " + _("The on-this-PC mode is not installed: you can install it in Settings.")
         explanation.set_text(text)
 
     engine.on_value_change(explain)

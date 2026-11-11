@@ -19,9 +19,8 @@ jobs:
       - name: Install
         shell: bash
         run: |
-          echo webrtcvad > exclude.txt
           uv venv --python 3.11 .venv
-          uv pip install --torch-backend cpu --excludes exclude.txt -e . pytest
+          uv pip install -e . pytest
       - name: Tests
         shell: bash
         run: uv run --no-sync python -m pytest -v

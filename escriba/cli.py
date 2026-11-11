@@ -6,7 +6,7 @@ import warnings
 from pathlib import Path
 
 from . import config, i18n
-from .i18n import N_, _
+from .i18n import N_, _, number
 
 USAGE = N_("""\
   escriba                       terminal menu
@@ -16,6 +16,7 @@ USAGE = N_("""\
   escriba archive [DIR ...]     compress what's already reviewed to Opus
   escriba enroll AUDIO START END NAME PROJECT
   escriba repair [DIR ...]      fix samples of audio moved to another folder
+  escriba install-local         install local mode (transcribe on this PC)
   escriba data                  where your data and keys are
 
 Each command has its own help: escriba <command> --help
@@ -131,6 +132,22 @@ def cmd_repair(a):
         print(_("Every sample points at an audio file that exists."))
 
 
+def cmd_install_local(a):
+    from . import extras
+    from .transcribe import local_available
+
+    if local_available():
+        print(_("Local mode is already installed."))
+        return
+    if not extras.find_uv():
+        sys.exit(_("uv was not found, so it can't be installed from here. Install it by hand:") + "\n  "
+                 + extras.manual_command())
+    print(_("Installing local mode (~{size} GB)...", size=number(extras.SIZE_GB)), flush=True)
+    if not extras.install(lambda line: print(line, flush=True)):
+        sys.exit(_("The installation failed. You can also install it by hand:") + "\n  " + extras.manual_command())
+    print(_("Local mode installed."))
+
+
 def cmd_data(a):
     print(_("Data folder: {path}", path=config.data_dir()))
     print(_("  Voices:   {path}", path=config.voiceprints_dir()))
@@ -183,7 +200,8 @@ def parser():
     engine.add_argument("--cloud", action="store_true",
                         help=_("AssemblyAI (default): a few minutes, ~$0.23/hour; needs ASSEMBLYAI_API_KEY"))
     engine.add_argument("--local", action="store_true",
-                        help=_("faster-whisper + pyannote on this PC: free but slow; needs the 'local' extra"))
+                        help=_("faster-whisper + pyannote on this PC: free but slow; needs local mode "
+                               "(escriba install-local)"))
     t.add_argument("--model", default="medium", help=_("local only: tiny/base/small/medium/large/turbo (medium)"))
     t.add_argument("--language", default="auto", help=_("language spoken: es, gl, en... (default auto)"))
     t.add_argument("--diarize", action="store_true", help=_("separate speakers (implied by --project)"))
@@ -221,6 +239,11 @@ def parser():
     rp.add_argument("--dry-run", action="store_true", help=_("only say what it would do"))
     rp.set_defaults(func=cmd_repair)
 
+    il = command("install-local", help=_("install local mode (transcribe on this PC)"),
+                 description=_("Adds faster-whisper and pyannote (~1.5 GB) to escriba's environment. Whisper's "
+                               "models are downloaded the first time each one is used."))
+    il.set_defaults(func=cmd_install_local)
+
     d = command("data", help=_("where your data is and which keys are set"))
     d.set_defaults(func=cmd_data)
     return p
@@ -238,7 +261,7 @@ def _early_lang(argv):
 
 def main(argv=None):
     _utf8()
-    # pyannote/webrtcvad noise (deprecated pkg_resources, etc.) that clutters the logs
+    # pyannote/torch noise (deprecation notices, etc.) that clutters the logs
     warnings.filterwarnings("ignore", category=UserWarning)
     argv = sys.argv[1:] if argv is None else argv
     if lang := _early_lang(argv):

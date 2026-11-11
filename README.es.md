@@ -35,43 +35,36 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Local    # nube + local
 Qué hace, paso a paso:
 
 1. **Instala [`uv`](https://docs.astral.sh/uv/)** si no está, con su instalador oficial. uv es un gestor de Python: descarga la versión de Python que necesita escriba sin tocar ningún otro Python que tengas.
-2. **Instala escriba** con `uv tool install`, en un entorno propio dentro de tu carpeta de usuario (sin permisos de administrador): Python 3.11 y todas las librerías, incluidas las de audio, torch para las huellas de voz (~200 MB) y la interfaz web. Con `-Local`, también faster-whisper y pyannote (varios GB más).
+2. **Instala escriba** con `uv tool install`, en un entorno propio dentro de tu carpeta de usuario (sin permisos de administrador): Python 3.11 y todas las librerías, incluidas las de audio y la interfaz web: ~150 MB en total. Con `-Local`, también faster-whisper y pyannote (~1,5 GB más); también puedes añadirlos después desde *Ajustes*.
 3. **Crea el acceso directo "Escriba"** en el escritorio y en el menú Inicio. Abre una ventana negra (déjala abierta mientras uses escriba; al cerrarla se cierra) y el navegador con la aplicación. Si escriba ya está en marcha, solo abre el navegador.
 
 Después:
 - **La primera vez:** ve a *Ajustes* y pega tu clave de AssemblyAI. Se guarda en `%LOCALAPPDATA%\escriba\secrets.env`.
 - **Si el micrófono no graba nada:** Configuración de Windows > Privacidad y seguridad > Micrófono > "Permitir que las aplicaciones de escritorio accedan al micrófono".
-- **Actualizar:** vuelve a ejecutar el script.
+- **Actualizar:** vuelve a ejecutar el script. Si el modo local está instalado, se mantiene.
 - **Desinstalar:** `install.ps1 -Uninstall`. Quita el programa y los accesos directos; tus datos (voces, glosario, claves) se quedan en `%LOCALAPPDATA%\escriba`.
 
 El script no necesita git: si no está junto al código, descarga el .zip del repositorio desde GitHub (`-Source` para indicar otra carpeta o URL). Si Windows está en castellano, sus mensajes también.
 
-Dos detalles propios de Windows de los que se encarga:
-- **`webrtcvad`:** resemblyzer pide `webrtcvad`, que en Windows hay que compilar. En su lugar se instala `webrtcvad-wheels`: el mismo módulo, ya compilado.
-- **Leer el audio en local:** pyannote recibe el audio ya cargado; leer los archivos por su cuenta necesitaría las DLL de FFmpeg.
+Un detalle propio de Windows del que se encarga: en modo local, pyannote recibe el audio ya cargado, porque leer los archivos por su cuenta necesitaría las DLL de FFmpeg.
 
 ## Instalar en Linux
 
 Necesita [`uv`](https://docs.astral.sh/uv/) y `libpulse` (viene con PipeWire y PulseAudio).
 
 ```bash
-uv tool install --python 3.11 "escriba @ file://$PWD"            # solo nube
-uv tool install --python 3.11 "escriba[local] @ file://$PWD"     # nube + local
+uv tool install --python 3.11 "escriba @ file://$PWD"     # solo nube, ~150 MB
+escriba install-local                                       # opcional: añadir el modo local
 ```
 
-En Linux, el torch de PyPI trae soporte NVIDIA (~2 GB) aunque no lo uses. Para la versión solo CPU, instálalo en un entorno virtual:
-
-```bash
-uv venv --python 3.11 .venv
-uv pip install --torch-backend cpu -e ".[local]"
-```
+`escriba install-local` (o *Ajustes* > *Transcribir en este PC*) añade faster-whisper y pyannote con el torch solo CPU, ~1,5 GB. Instalar directamente el extra `local` con `uv tool install` también funciona, pero en Linux el torch de PyPI trae soporte NVIDIA (~2 GB más) que escriba no usa.
 
 ## Uso
 
 ```bash
 escriba web        # interfaz en el navegador
 escriba            # menú en la terminal
-escriba --help     # órdenes sueltas: record, transcribe, archive, enroll, repair, data
+escriba --help     # órdenes sueltas: record, transcribe, archive, enroll, repair, install-local, data
 ```
 
 La web y el menú de la terminal hacen lo mismo y se pueden usar a la vez. La web solo escucha en tu propio PC (`127.0.0.1:8765`), así que nadie de tu red puede entrar. Cerrar el navegador no para una grabación ni una transcripción; cerrar la ventana de la terminal sí para la grabación.
@@ -124,7 +117,9 @@ Probado con 3 reuniones reales: más completo y con mejores nombres propios que 
 
 ## Modo local (faster-whisper + pyannote)
 
-Instala con `-Local` (Windows) o el extra `local` (Linux) y, una sola vez:
+Es opcional. Instálalo desde *Ajustes* > *Transcribir en este PC*, con `escriba install-local` o con `install.ps1 -Local`: ~1,5 GB de librerías, que se añaden al entorno de escriba sin tocar lo instalado, así que funciona con escriba abierto. Cada modelo de whisper se descarga la primera vez que se usa (`medium`, el de por defecto, ~1,5 GB).
+
+Después, una sola vez:
 
 1. Crea un token en https://hf.co/settings/tokens
 2. Acepta las condiciones en https://hf.co/pyannote/speaker-diarization-3.1 y https://hf.co/pyannote/speaker-diarization-community-1
@@ -149,6 +144,8 @@ La separación de hablantes es el cuello de botella: casi todo su tiempo se va e
 ## Identificación por voz
 
 Cada proyecto (cliente, equipo...) tiene su propia librería de voces, que se crea al crear el proyecto. Al revisar los hablantes de una transcripción, confirmar o corregir un nombre añade esa muestra a la persona; "No lo sé" no toca la librería.
+
+Las huellas de voz se calculan en tu PC en los dos modos, con el codificador de voz preentrenado de [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) (Apache-2.0) reescrito en numpy (`encoder.py`): da las mismas huellas que el original (comprobado con 158 clips reales, diferencia por debajo de 1e-6) sin torch, con lo que la instalación básica ocupa ~150 MB en vez de ~1,2 GB.
 
 En *Personas* puedes escuchar, mover o borrar muestras, cambiar el nombre de una persona (también en las transcripciones del proyecto; si el nombre nuevo ya existe, se juntan), borrar a una persona, deshacer el último cambio, añadir una muestra a mano, reparar rutas y auditar la librería (avisa de muestras demasiado parecidas entre dos personas, de casi duplicadas y de muestras de la misma persona que no se parecen entre sí).
 

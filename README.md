@@ -35,43 +35,36 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Local    # cloud + local
 What it does, step by step:
 
 1. **Installs [`uv`](https://docs.astral.sh/uv/)** if missing, with its official installer. uv is a Python manager: it downloads the Python version escriba needs without touching any other Python you have.
-2. **Installs escriba** with `uv tool install`, in its own environment inside your user folder (no admin rights needed): Python 3.11 and every library, including the audio ones, torch for voiceprints (~200 MB) and the web interface. With `-Local`, also faster-whisper and pyannote (several GB more).
+2. **Installs escriba** with `uv tool install`, in its own environment inside your user folder (no admin rights needed): Python 3.11 and every library, including the audio ones and the web interface: ~150 MB in all. With `-Local`, also faster-whisper and pyannote (~1.5 GB more); you can also add them later from *Settings*.
 3. **Creates an "Escriba" shortcut** on the desktop and in the Start menu. It opens a black window (keep it open while you use escriba; closing it closes escriba) and your browser with the app. If escriba is already running, it just opens the browser.
 
 Then:
 - **First run:** go to *Settings* and paste your AssemblyAI key. It is stored in `%LOCALAPPDATA%\escriba\secrets.env`.
 - **If the microphone records nothing:** Windows Settings > Privacy & security > Microphone > "Let desktop apps access your microphone".
-- **Update:** run the script again.
+- **Update:** run the script again. If local mode is installed, it is kept.
 - **Uninstall:** `install.ps1 -Uninstall`. Removes the program and the shortcuts; your data (voices, glossary, keys) stays in `%LOCALAPPDATA%\escriba`.
 
 The script doesn't need git: if it's not next to the code, it downloads the repository .zip from GitHub (`-Source` to point to another folder or URL). Its messages are in Spanish if Windows is in Spanish.
 
-Two Windows-specific details it takes care of:
-- **`webrtcvad`:** resemblyzer asks for `webrtcvad`, which must be compiled on Windows. `webrtcvad-wheels` is installed instead: the same module, prebuilt.
-- **Reading audio locally:** pyannote gets the audio already loaded; reading files itself would need the FFmpeg DLLs.
+One Windows-specific detail it takes care of: in local mode, pyannote gets the audio already loaded, because reading files itself would need the FFmpeg DLLs.
 
 ## Install on Linux
 
 Requires [`uv`](https://docs.astral.sh/uv/) and `libpulse` (comes with PipeWire and PulseAudio).
 
 ```bash
-uv tool install --python 3.11 "escriba @ file://$PWD"            # cloud only
-uv tool install --python 3.11 "escriba[local] @ file://$PWD"     # cloud + local
+uv tool install --python 3.11 "escriba @ file://$PWD"     # cloud only, ~150 MB
+escriba install-local                                       # optional: add local mode
 ```
 
-On Linux, torch from PyPI ships NVIDIA support (~2 GB) even if you don't use it. To get the CPU-only build, install into a virtual environment instead:
-
-```bash
-uv venv --python 3.11 .venv
-uv pip install --torch-backend cpu -e ".[local]"
-```
+`escriba install-local` (or *Settings* > *Transcribe on this PC*) adds faster-whisper and pyannote with the CPU-only torch, ~1.5 GB. Installing the `local` extra directly with `uv tool install` also works, but on Linux torch from PyPI brings NVIDIA support (~2 GB more) that escriba doesn't use.
 
 ## Usage
 
 ```bash
 escriba web        # browser interface
 escriba            # terminal menu
-escriba --help     # one-off commands: record, transcribe, archive, enroll, repair, data
+escriba --help     # one-off commands: record, transcribe, archive, enroll, repair, install-local, data
 ```
 
 The web interface and the terminal menu do the same things and can be used at the same time. The web only listens on your own PC (`127.0.0.1:8765`), so nobody on your network can reach it. Closing the browser doesn't stop a recording or a transcription; closing the terminal window does stop a recording.
@@ -124,7 +117,9 @@ Tested on 3 real meetings: more complete and with better proper names than local
 
 ## Local mode (faster-whisper + pyannote)
 
-Install with `-Local` (Windows) or the `local` extra (Linux) and, once:
+It's optional. Install it from *Settings* > *Transcribe on this PC*, with `escriba install-local`, or with `install.ps1 -Local`: ~1.5 GB of libraries, added to escriba's environment without touching what's installed, so it works while escriba is running. Each whisper model is downloaded the first time it's used (`medium`, the default, ~1.5 GB).
+
+Then, once:
 
 1. Create a token at https://hf.co/settings/tokens
 2. Accept the conditions at https://hf.co/pyannote/speaker-diarization-3.1 and https://hf.co/pyannote/speaker-diarization-community-1
@@ -150,6 +145,8 @@ Diarization is the bottleneck: almost all its time goes into voice embeddings. S
 
 Each project (client, team...) has its own voice library, created when you create the project. When you review the speakers of a transcript, confirming or correcting a name adds that sample to the person; "I don't know" leaves the library untouched.
 
+Voiceprints are computed on your PC in both modes, with [Resemblyzer](https://github.com/resemble-ai/Resemblyzer)'s pretrained voice encoder (Apache-2.0) rewritten in numpy (`encoder.py`): it gives the same embeddings as the original (checked on 158 real clips, difference below 1e-6) without torch, which keeps the base install at ~150 MB instead of ~1.2 GB.
+
 In *People* you can play, move or delete samples, rename a person (also in the project's transcripts; if the new name exists, both join), delete a person, undo the last change, add a sample by hand, repair paths and audit the library (it flags samples that are too similar between two people, near-duplicates, and samples of the same person that don't match each other).
 
 ## Development
@@ -160,6 +157,8 @@ uv pip install --torch-backend cpu -e ".[local]" pytest
 .venv/bin/python -m pytest
 ```
 
+`tools/export_voice_encoder.py` regenerates `escriba/models/voice_encoder.npz` from Resemblyzer's weights; `tests/test_encoder.py` checks the numpy encoder still matches it.
+
 CI runs the tests on Ubuntu and Windows, and runs `install.ps1` end to end on Windows (install, open the web, uninstall).
 
 | Module | What it does |
@@ -168,9 +167,11 @@ CI runs the tests on Ubuntu and Windows, and runs `install.ps1` end to end on Wi
 | `i18n.py`, `locales/` | interface language and translations |
 | `record.py` | recording (soundcard) |
 | `transcribe.py` | picks the engine, low priority |
+| `extras.py` | installs local mode afterwards |
 | `cloud.py` / `local.py` | AssemblyAI / faster-whisper + pyannote |
 | `speakers.py` | identify voices, write the .txt and .speakers.json |
 | `review.py` | review decisions, feed the library |
+| `encoder.py`, `models/` | voiceprints with numpy (Resemblyzer's model) |
 | `voiceprints.py` | voice library and audit |
 | `meetings.py` | a folder's meetings, their state, deleting one |
 | `repair.py` | repair paths of moved meetings |

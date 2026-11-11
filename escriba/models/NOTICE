@@ -1,0 +1,6 @@
+voice_encoder.npz holds the pretrained weights of Resemblyzer's voice encoder
+(https://github.com/resemble-ai/Resemblyzer, Copyright Resemble AI), licensed
+under the Apache License 2.0 (see LICENSE-APACHE at the root of this
+repository), converted from PyTorch to numpy arrays with
+tools/export_voice_encoder.py. It also holds the 40-band mel filter bank that
+librosa computes for 16 kHz audio and a 400-point FFT.

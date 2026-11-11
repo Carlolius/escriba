@@ -129,12 +129,10 @@ def archive_if_complete(sidecar):
 
 def enroll(audio, start, end, name, project):
     """Adds a voice sample by hand (the start-end clip of an audio file)."""
-    from resemblyzer import VoiceEncoder
-
-    from . import audio as audio_util
+    from . import audio as audio_util, encoder
 
     data, _sr = audio_util.read_clip(audio, start, end)
-    emb = VoiceEncoder(verbose=False).embed_utterance(data)
+    emb = encoder.embed(data)
     origin = {"audio": str(Path(audio).resolve()), "start": float(start), "end": float(end)}
     return voiceprints.add_sample(project, name, emb, origin=origin)
 

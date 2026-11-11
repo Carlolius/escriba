@@ -1,8 +1,11 @@
-"""Settings: language, keys, recording devices, appearance, glossary and data folder."""
-from nicegui import run, ui
+"""Settings: language, keys, local mode, recording devices, appearance,
+glossary and data folder."""
+from collections import deque
 
-from .. import config, i18n, record
-from ..i18n import N_, _
+from nicegui import background_tasks, run, ui
+
+from .. import config, extras, i18n, record
+from ..i18n import N_, _, number
 from ..transcribe import local_available
 from .common import THEMES, frame, title
 
@@ -34,9 +37,10 @@ def page():
             if secrets.is_symlink():
                 ui.label(_("They're saved in {path} (secrets.env is a link).", path=secrets.resolve())) \
                     .classes("text-sm soft-text")
-            if not local_available():
-                ui.label(_("The on-this-PC mode is not installed: you can only transcribe in the cloud.")) \
-                    .classes("text-sm soft-text")
+
+        with ui.card().classes("w-full gap-3"):
+            ui.label(_("Transcribe on this PC")).classes("text-lg font-medium")
+            local_mode = ui.column().classes("w-full gap-2")
 
         with ui.card().classes("w-full gap-3"):
             ui.label(_("Recording")).classes("text-lg font-medium")
@@ -97,7 +101,96 @@ def page():
         config.update_state(**{key: value or None})
         ui.notify(_("Saved: it will be used for the next recording"), type="positive")
 
+    shown = {"key": None, "log": None}
+
+    def draw_local_mode():
+        key = (local_available(), INSTALL["running"], INSTALL["ok"])
+        if key != shown["key"]:  # redrawn only when the state changes, so nothing blinks
+            shown["key"] = key
+            local_mode.clear()
+            with local_mode:
+                shown["log"] = _local_mode()
+        if shown["log"]:
+            shown["log"].set_text(_log_text())
+
     ui.timer(0.1, load_devices, once=True)
+    draw_local_mode()
+    ui.timer(1.0, draw_local_mode)
+
+
+# Installing local mode belongs to the server, not to the tab: it goes on if
+# the page is closed
+INSTALL = {"running": False, "ok": None, "lines": deque(maxlen=300)}
+
+
+def _whisper_sizes():
+    return ", ".join(f"{model} ~{number(gb)} GB" for model, gb in (("small", 0.5), ("medium", 1.5), ("large-v3", 3)))
+
+
+def _local_mode():
+    """Draws the card's content; returns the log label to keep updating, if any."""
+    if local_available():
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("check_circle", color="positive")
+            ui.label(_("Installed."))
+        ui.label(_("Each whisper model is downloaded the first time you use it ({sizes}).", sizes=_whisper_sizes())) \
+            .classes("text-sm soft-text")
+        if not config.read_secret("HF_TOKEN"):
+            ui.label(_("To separate speakers it also needs the Hugging Face token (above).")) \
+                .classes("text-sm text-warning")
+        return None
+    ui.label(_("Free and the audio never leaves the PC, but slower than the cloud. It's optional: it needs "
+               "~{size} GB of libraries, and then the whisper model the first time ({sizes}).",
+               size=number(extras.SIZE_GB), sizes=_whisper_sizes())).classes("text-sm soft-text")
+    if INSTALL["running"]:
+        with ui.row().classes("items-center gap-3"):
+            ui.spinner(size="md")
+            ui.label(_("Installing... it may take a few minutes. You can keep using escriba."))
+        return _install_log()
+    log = None
+    if INSTALL["ok"] is False:
+        ui.label(_("The installation failed. You can also install it by hand:")).classes("text-negative")
+        ui.code(extras.manual_command(), language=None).classes("w-full")
+        log = _install_log()
+    if not extras.find_uv():
+        ui.label(_("uv was not found, so it can't be installed from here. Install it by hand:")) \
+            .classes("text-warning")
+        ui.code(extras.manual_command(), language=None).classes("w-full")
+        return log
+    free = extras.free_gb()
+    if free < extras.NEEDED_GB:
+        ui.label(_("Only {free} GB free on the disk: about {needed} GB are needed.",
+                   free=number(free), needed=extras.NEEDED_GB)).classes("text-warning")
+    ui.button(_("Install (~{size} GB)", size=number(extras.SIZE_GB)), icon="download",
+              on_click=_start_install).props("unelevated").classes("self-start")
+    return log
+
+
+def _log_text():
+    return "\n".join(list(INSTALL["lines"])[-40:]) or "..."
+
+
+def _install_log():
+    with ui.expansion(_("See what it's doing")).classes("w-full"):
+        return ui.label(_log_text()).classes("w-full whitespace-pre-wrap font-mono text-xs max-h-72 overflow-auto")
+
+
+def _start_install():
+    if INSTALL["running"]:
+        return
+    INSTALL.update(running=True, ok=None)
+    INSTALL["lines"].clear()
+
+    async def work():
+        try:
+            INSTALL["ok"] = await run.io_bound(extras.install, INSTALL["lines"].append)
+        except Exception as e:
+            INSTALL["lines"].append(str(e))
+            INSTALL["ok"] = False
+        finally:
+            INSTALL["running"] = False
+
+    background_tasks.create(work())
 
 
 def _key_field(key, name, help_text):
