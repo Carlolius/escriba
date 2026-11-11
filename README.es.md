@@ -104,6 +104,10 @@ uv pip install --torch-backend cpu -e ".[local]" pytest
 
 Los textos de la interfaz se escriben en inglés dentro de `_()` y se traducen en `escriba/locales/<idioma>.json`. Las huellas de voz usan el codificador de voz de [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) (Apache-2.0), reimplementado en numpy.
 
+## Contribuir
+
+Las incidencias y pull requests son bienvenidas (en inglés). Consulta [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Licencia
 
 Con licencia [Apache 2.0](LICENSE-APACHE) o [MIT](LICENSE-MIT), a tu elección.

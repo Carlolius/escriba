@@ -104,6 +104,10 @@ uv pip install --torch-backend cpu -e ".[local]" pytest
 
 Interface texts are written in English inside `_()` and translated in `escriba/locales/<language>.json`. Voiceprints use [Resemblyzer](https://github.com/resemble-ai/Resemblyzer)'s voice encoder (Apache-2.0), reimplemented in numpy.
 
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
