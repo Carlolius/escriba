@@ -94,10 +94,16 @@ def transcribe(audio, out, model="medium", language="auto", prompt="", diarize=F
 
     turns, names = None, None
     if diarize:
-        turns = _diarize(audio, speakers, progress, use_gpu)
+        try:
+            turns = _diarize(audio, speakers, progress, use_gpu)
+        except Exception as e:
+            # Don't throw away the transcription (maybe an hour of CPU) for this
+            print(_("WARNING: separating speakers failed ({error}): the transcript is saved without speakers",
+                    error=e), flush=True)
+            turns = None
         progress.close()  # stop redrawing the bars before printing the matches
         if turns:
-            names = speakers_mod.name_speakers(str(audio), str(out), turns, project, list(speakers))
+            names = speakers_mod.safe_name_speakers(audio, out, turns, project, speakers)
 
     progress.close()
     speakers_mod.write_transcript(str(out), segments, turns, names)

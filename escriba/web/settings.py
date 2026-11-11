@@ -113,9 +113,13 @@ def page():
         if shown["log"]:
             shown["log"].set_text(_log_text())
 
+    async def start_local_mode():
+        await run.io_bound(gpu.nvidia)  # runs nvidia-smi once, off the event loop
+        draw_local_mode()
+        ui.timer(1.0, draw_local_mode)
+
     ui.timer(0.1, load_devices, once=True)
-    draw_local_mode()
-    ui.timer(1.0, draw_local_mode)
+    ui.timer(0.1, start_local_mode, once=True)
 
 
 # Installing local mode belongs to the server, not to the tab: it goes on if

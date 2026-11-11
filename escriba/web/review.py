@@ -3,12 +3,16 @@ from nicegui import run, ui
 
 from .. import review
 from ..i18n import _, _n
-from .common import frame, player, set_project, title
+from .common import frame, no_project, player, set_project, title
 
 
 @ui.page("/review")
 def page():
     with frame("/review") as current:
+        if not current:
+            title(_("Review speakers"))
+            no_project()
+            return
         content = ui.column().classes("w-full gap-4")
 
     async def listing():

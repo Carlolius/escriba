@@ -44,10 +44,15 @@ def choose_project():
     if choice is None:
         return None
     if choice == NEW_PROJECT:
-        choice = questionary.text(_("Name of the new project (e.g. client_x):")).ask()
-        if not choice:
-            return None
-        config.create_project(choice)
+        while True:
+            choice = questionary.text(_("Name of the new project (e.g. client_x):")).ask()
+            if not choice:
+                return None
+            try:
+                choice = config.create_project(choice)
+                break
+            except ValueError as e:
+                console.print(f"[red]{escape(str(e))}[/red]")
     config.update_state(last_project=choice)
     return choice
 
@@ -206,10 +211,11 @@ def do_record():
     description = questionary.text(_("Meeting description (e.g. weekly_followup):")).ask()
     if description is None:
         return
-    audio = folder / f"{record.default_name(description)}.wav"
+    audio = record.free_target(folder, record.default_name(description))
 
     try:
         r, warning = record.from_preferences(audio)
+        r.start()
     except Exception as e:
         console.print("[red]" + escape(_("Can't record: {error}", error=e)) + "[/red]")
         return
@@ -218,7 +224,6 @@ def do_record():
     console.print("[dim]" + _("Tell the others you are recording the meeting.") + "[/dim]")
     console.print(_("[bold]Recording[/bold] {name}\n  What plays: {output}\n  Microphone: {mic}",
                     name=audio.name, output=r.loop.name, mic=r.mic.name))
-    r.start()
     try:
         with Live(console=console, refresh_per_second=4, transient=True) as live:
             while True:
@@ -294,8 +299,13 @@ def _transcribe(project, audio):
 def show_jobs():
     """Prints the background transcriptions; returns how many are still running."""
     n = 0
+    told = []
     for job, status, text in jobs.check_jobs():
         name = escape(Path(job["audio"]).stem)
+        if status != "running":
+            if job.get("seen"):
+                continue
+            told.append(job["pid"])
         if status == "running":
             console.print(_("[cyan]Running:[/cyan] {name} · {text}", name=name, text=text))
             n += 1
@@ -303,6 +313,7 @@ def show_jobs():
             console.print(_("[green]Done:[/green] {name} ({text})", name=name, text=text))
         else:
             console.print(_("[red]Failed:[/red] {name} · {text}", name=name, text=escape(text)))
+    jobs.mark_seen(told)
     return n
 
 
@@ -351,7 +362,11 @@ def _delete_meeting(audio):
                          "{n} voice samples were taken from this meeting.", samples))
         delete_samples = questionary.confirm(_("Delete them too (otherwise they stay, but can't be played)"),
                                              default=False).ask()
-    n_files, n_samples = meetings.delete(audio, bool(delete_samples))
+    try:
+        n_files, n_samples = meetings.delete(audio, bool(delete_samples))
+    except RuntimeError as e:
+        console.print(f"[red]{escape(str(e))}[/red]")
+        return False
     text = _n("{n} file deleted", "{n} files deleted", n_files)
     if n_samples:
         text += " · " + _n("{n} sample deleted (can be undone in People)",
@@ -701,7 +716,14 @@ def _people_enroll(project):
     name = questionary.text(_("Person's name:")).ask()
     if not (start and end and name):
         return
-    n, added = review.enroll(audio, float(start), float(end), name, project)
+    try:
+        start, end = float(start.replace(",", ".")), float(end.replace(",", "."))
+        if not 0 <= start < end:
+            raise ValueError(_("The end must come after the start"))
+        n, added = review.enroll(audio, start, end, name.strip(), project)
+    except ValueError as e:
+        console.print(f"[red]{escape(str(e))}[/red]")
+        return
     _print_decision(name, {"added": added, "samples": n}, project)
 
 
@@ -850,5 +872,10 @@ def main():
                                     + [_choice(_("Quit"), BACK)]).ask()
         if choice in (None, BACK):
             break
-        options[choice][1]()
+        try:
+            options[choice][1]()
+        except KeyboardInterrupt:
+            console.print()
+        except Exception as e:  # an unexpected error ends the action, not the whole menu
+            console.print("[red]" + escape(_("Error: {error}", error=e)) + "[/red]")
         console.print()

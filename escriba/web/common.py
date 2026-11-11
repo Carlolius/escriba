@@ -4,6 +4,7 @@ import html
 import io
 import os
 import secrets
+from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -129,7 +130,9 @@ def current_project():
 
 
 def set_project(name):
-    config.create_project(name)  # does nothing if it exists
+    """Makes `name` the current project, creating it if needed. ValueError
+    if the name isn't valid."""
+    name = config.create_project(name)  # does nothing if it exists
     config.update_state(last_project=name)
 
 
@@ -194,7 +197,10 @@ def frame(current_path):
 
 def _change_project(name):
     if name and name != config.load_state().get("last_project"):
-        set_project(name)
+        try:
+            set_project(name)
+        except ValueError as e:
+            ui.notify(str(e), type="warning")
         ui.navigate.reload()
 
 
@@ -216,15 +222,24 @@ def no_project():
 # The web never gets paths: each audio shown is registered here under a random
 # token, and /clip/<token> only serves what's registered.
 
-_CLIPS = {}
+_CLIPS = OrderedDict()   # token -> (path, start, end), oldest first
+_TOKENS = {}             # (path, start, end) -> token: the same clip keeps its token across redraws
 _MAX_CLIPS = 5000
+MEDIA_TYPES = {".wav": "audio/wav", ".opus": "audio/ogg", ".ogg": "audio/ogg", ".flac": "audio/flac",
+               ".mp3": "audio/mpeg", ".m4a": "audio/mp4"}
 
 
 def _register(path, start=None, end=None):
-    if len(_CLIPS) > _MAX_CLIPS:
-        _CLIPS.clear()
-    token = secrets.token_urlsafe(16)
-    _CLIPS[token] = (str(path), start, end)
+    key = (str(path), start, end)
+    token = _TOKENS.get(key)
+    if token:
+        _CLIPS.move_to_end(token)
+    else:
+        token = secrets.token_urlsafe(16)
+        _CLIPS[token], _TOKENS[key] = key, token
+        while len(_CLIPS) > _MAX_CLIPS:  # forget the least recently shown
+            _old, old_key = _CLIPS.popitem(last=False)
+            _TOKENS.pop(old_key, None)
     return f"/clip/{token}"
 
 
@@ -287,7 +302,7 @@ async def _serve_clip(token: str, request: Request):
     if start is None:
         if not Path(path).exists():
             return Response(status_code=404)
-        media_type = "audio/ogg" if path.lower().endswith(".opus") else "audio/wav"
+        media_type = MEDIA_TYPES.get(Path(path).suffix.lower(), "application/octet-stream")
         return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-store"})
     data = await run.io_bound(_wav_of, path, start, end)
     return _ranged(data, "audio/wav", request.headers.get("range"))
@@ -414,6 +429,10 @@ async def transcribe_dialog(audio, project):
     if key := missing_key(engine.value):
         ui.notify(_("The {key} key is missing: set it in Settings", key=key), type="negative")
         return False
-    await run.io_bound(jobs.start, audio, project, engine.value, model.value, language.value)
+    try:
+        await run.io_bound(jobs.start, audio, project, engine.value, model.value, language.value)
+    except Exception as e:
+        ui.notify(_("Can't start the transcription: {error}", error=e), type="negative", multi_line=True)
+        return False
     ui.notify(_("Transcribing {name} in the background", name=Path(audio).name), type="positive")
     return True

@@ -15,9 +15,11 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from . import config
 from .i18n import _
 
 SR = 16000
+STOP_GRACE = 3   # seconds a stuck capture may delay stopping
 CHUNK = SR // 10           # each source delivers 0.1 s chunks
 MAX_LAG = SR               # if a source falls >1 s behind, it's padded with silence
 MUTED_MIC_WARNING_S = 10   # mic at absolute zero for this long -> warning
@@ -92,7 +94,8 @@ class Recording:
 
     def start(self):
         self.target.parent.mkdir(parents=True, exist_ok=True)
-        self._file = sf.SoundFile(str(self.target), "w", samplerate=SR, channels=1, subtype="PCM_16")
+        # "x": fails if the file exists, instead of overwriting another recording
+        self._file = sf.SoundFile(str(self.target), "x", samplerate=SR, channels=1, subtype="PCM_16")
         for name, device in (("system", self.loop), ("mic", self.mic)):
             self._threads.append(threading.Thread(target=self._capture, args=(name, device), daemon=True))
         self._threads.append(threading.Thread(target=self._mix, daemon=True))
@@ -101,9 +104,12 @@ class Recording:
 
     def stop(self):
         self._stop.set()
-        for t in self._threads:
-            t.join(timeout=5)
-        self._file.close()
+        # The mixer is the only one writing the file: it ends by itself at
+        # most STOP_GRACE seconds later, even if a capture is stuck
+        mixer = self._threads[-1]
+        mixer.join(timeout=STOP_GRACE + 5)
+        if not mixer.is_alive():
+            self._file.close()
         return self.target
 
     def _capture(self, name, device):
@@ -124,8 +130,11 @@ class Recording:
     def _mix(self):
         pending = {"system": np.zeros(0, "float32"), "mic": np.zeros(0, "float32")}
         last_flush = time.time()
+        stopped_at = None
         while True:
             stopping = self._stop.is_set()
+            if stopping and stopped_at is None:
+                stopped_at = time.time()
             # Before draining the queues: if no capture is alive any more, what's
             # left in them is the last of it and we can finish after writing it.
             capturing = any(t.is_alive() for t in self._threads[:2])
@@ -155,7 +164,7 @@ class Recording:
             if time.time() - last_flush > 5:
                 self._file.flush()  # header up to date: if it's cut, the WAV still works
                 last_flush = time.time()
-            if stopping and not capturing:
+            if stopping and (not capturing or time.time() - stopped_at > STOP_GRACE):
                 break
             time.sleep(0.1)
 
@@ -175,7 +184,6 @@ def from_preferences(target):
     """Recording with the output and mic chosen in Settings. If they're gone
     (headphones unplugged...), with the system ones and a warning.
     Returns (recording, warning | None)."""
-    from . import config
 
     state = config.load_state()
     output, mic = state.get("output_device"), state.get("mic")
@@ -190,4 +198,17 @@ def from_preferences(target):
 def default_name(description=""):
     from datetime import datetime
     now = datetime.now()
-    return f"{now:%Y-%m-%d}_{description.strip() or _('meeting') + '_' + now.strftime('%H%M')}"
+    return f"{now:%Y-%m-%d}_{config.clean_name(description) or _('meeting') + '_' + now.strftime('%H%M')}"
+
+
+def free_target(folder, stem):
+    """folder/stem.wav, or stem_2.wav, stem_3.wav... if a meeting with that
+    name already exists (also archived as .opus, or just its transcript):
+    a new recording never overwrites nor inherits another meeting's files."""
+    from . import meetings
+
+    folder = Path(folder)
+    target, n = folder / f"{stem}.wav", 2
+    while meetings.files_of(target):
+        target, n = folder / f"{stem}_{n}.wav", n + 1
+    return target

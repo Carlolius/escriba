@@ -2,7 +2,6 @@
 import html
 import math
 from collections import deque
-from pathlib import Path
 
 from nicegui import run, ui
 
@@ -124,10 +123,7 @@ def page():
             return
         if STATE["recording"]:
             return
-        target = Path(folder["path"]) / f"{record.default_name(description.value or '')}.wav"
-        if target.exists():
-            ui.notify(_("{name} already exists: change the description", name=target.name), type="warning")
-            return
+        target = record.free_target(folder["path"], record.default_name(description.value or ""))
         button.disable()
         try:
             r, warning = await run.io_bound(record.from_preferences, target)

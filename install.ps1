@@ -61,6 +61,9 @@ function Step($text) { Write-Host "`n==> $text" -ForegroundColor Cyan }
 # wait for Enter so there's time to read the result
 function Wait-Enter { if (-not $NoPause) { Read-Host "`n$(T 'Press Enter to close' 'Pulsa Enter para cerrar')" | Out-Null } }
 function Fail($text) { Write-Host "`nERROR: $text" -ForegroundColor Red; Wait-Enter; exit 1 }
+# Any unexpected error also stops here with the message and waits for Enter,
+# instead of closing the window before it can be read
+trap { Fail $_ }
 
 function Shortcuts {
     @(
@@ -79,11 +82,26 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     powershell -NoProfile -ExecutionPolicy Bypass -Command 'irm https://astral.sh/uv/install.ps1 | iex'
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { Fail (T "Couldn't install uv." 'No se pudo instalar uv.') }
 }
+# An old uv may not know --torch-backend
+if (-not $Uninstall -and -not ((uv tool install --help) -match 'torch-backend')) {
+    Step (T 'Updating uv' 'Actualizando uv')
+    uv self update
+    if (-not ((uv tool install --help) -match 'torch-backend')) { Fail (T 'uv is too old: update it (uv self update) and try again.' 'uv es demasiado antiguo: actualízalo (uv self update) y vuelve a intentarlo.') }
+}
+
+# Escriba (or a transcription it started) can't be running: Windows doesn't
+# let files in use be replaced or deleted
+$toolDir = (uv tool dir).Trim()
+$busy = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -eq 'escriba' -or ($_.Path -and $_.Path -like (Join-Path $toolDir 'escriba\*'))
+}
+if ($busy) { Fail (T 'Escriba is running: close its black window (and wait for any transcription to end), then run this again.' 'Escriba está en marcha: cierra su ventana negra (y espera a que acabe cualquier transcripción) y vuelve a ejecutar esto.') }
 
 # ── Uninstall ────────────────────────────────────────────────────────────────
 if ($Uninstall) {
     Step (T 'Uninstalling Escriba' 'Desinstalando Escriba')
     uv tool uninstall escriba
+    if ($LASTEXITCODE -ne 0) { Fail (T "uv couldn't uninstall Escriba (see the messages above)." 'uv no pudo desinstalar Escriba (mira los mensajes de arriba).') }
     foreach ($lnk in Shortcuts) { Remove-Item $lnk -ErrorAction SilentlyContinue }
     Write-Host "`n$(T 'Done. Your data is still in' 'Listo. Tus datos siguen en') $env:LOCALAPPDATA\escriba $(T '(delete it by hand if you want).' '(bórralos a mano si quieres).')"
     Wait-Enter
@@ -103,7 +121,7 @@ if (Test-Path $Source) {
 }
 # Local mode may have been added later from escriba itself (Settings or
 # `escriba install-local`): keep it when updating
-$sitePackages = Join-Path (uv tool dir).Trim() 'escriba\Lib\site-packages'
+$sitePackages = Join-Path $toolDir 'escriba\Lib\site-packages'
 if (-not $Local -and (Test-Path (Join-Path $sitePackages 'faster_whisper'))) {
     $Local = $true
     Write-Host (T 'Local mode is installed: it is kept.' 'El modo local está instalado: se mantiene.')
@@ -150,7 +168,8 @@ if ($Spanish) {
 - Si al grabar el micrófono no recoge nada: Configuración de Windows >
   Privacidad y seguridad > Micrófono > "Permitir que las aplicaciones de
   escritorio accedan al micrófono".
-- Para actualizar, vuelve a ejecutar este script.
+- Para actualizar, descarga la versión nueva y ejecuta su install.ps1 (o
+  este con -Source y la URL del .zip de GitHub).
 "@
 } else {
     Write-Host @"
@@ -160,7 +179,8 @@ if ($Spanish) {
 - The first time, go to Settings and paste your AssemblyAI key.
 - If the microphone records nothing: Windows Settings > Privacy & security >
   Microphone > "Let desktop apps access your microphone".
-- To update, run this script again.
+- To update, download the new version and run its install.ps1 (or this one
+  with -Source and the URL of the GitHub .zip).
 "@
 }
 Wait-Enter

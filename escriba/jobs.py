@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psutil
@@ -67,10 +68,9 @@ def start(audio, project, engine="cloud", model="medium", language="auto"):
     with open(log, "w", encoding="utf-8") as f:
         proc = subprocess.Popen(command(audio, project, engine, model, language), stdout=f,
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=environment(), **options)
-    state = config.load_state()
-    state.setdefault("jobs", []).append({"audio": str(audio), "log": str(log), "pid": proc.pid,
-                                         "project": project, "engine": engine})
-    config.save_state(state)
+    job = {"audio": str(audio), "log": str(log), "pid": proc.pid, "project": project, "engine": engine,
+           "started": time.time()}
+    config.update_state(lambda state: state.setdefault("jobs", []).append(job))
     return log
 
 
@@ -159,31 +159,64 @@ def progress_from_log(log, engine=None):
     return progress_info(log, engine)["text"]
 
 
+KEEP_FINISHED = 24 * 3600   # finished jobs stay listed for a day
+
+
+def _finish(job):
+    """Status of a job whose process is gone."""
+    return "done" if Path(job["audio"]).with_suffix(".txt").exists() else "failed"
+
+
 def check_jobs():
-    """[(job, "running" | "done" | "failed", text)]. Finished jobs are
-    returned once and removed from the state."""
+    """[(job, "running" | "done" | "failed", text)] of the running jobs and
+    the ones finished in the last day. Finished jobs keep their status and
+    end time in the state, so every window (web tabs, terminal menu) sees
+    them; job["seen"] says whether the user was already told."""
+    now = time.time()
+    alive = {}
+
+    def refresh(state):
+        kept = []
+        for job in state.get("jobs", []):
+            if not job.get("status"):
+                if job["pid"] not in alive:
+                    alive[job["pid"]] = is_alive(job["pid"])
+                if not alive[job["pid"]]:
+                    job.update(status=_finish(job), ended=now)
+            if job.get("status") and now - job.get("ended", now) > KEEP_FINISHED:
+                continue
+            kept.append(job)
+        state["jobs"] = kept
+
     state = config.load_state()
-    jobs = state.get("jobs", [])
-    result, still = [], []
-    for job in jobs:
-        if is_alive(job["pid"]):
-            result.append((job, "running", progress_from_log(job["log"], job.get("engine"))))
-            still.append(job)
-        elif Path(job["audio"]).with_suffix(".txt").exists():
-            result.append((job, "done", _("ready to review speakers")))
+    if any(not job.get("status") and not is_alive(job["pid"]) for job in state.get("jobs", [])) or any(
+            job.get("status") and now - job.get("ended", now) > KEEP_FINISHED for job in state.get("jobs", [])):
+        state = config.update_state(refresh)
+    result = []
+    for job in state.get("jobs", []):
+        status = job.get("status") or "running"
+        if status == "running":
+            text = progress_from_log(job["log"], job.get("engine"))
+        elif status == "done":
+            text = _("ready to review speakers")
         else:
-            result.append((job, "failed", _("see {log}", log=job["log"])))
-    if len(still) != len(jobs):
-        # Read again right before saving: another window may have started a job meanwhile
-        state = config.load_state()
-        finished = {job["pid"] for job, status, _text in result if status != "running"}
-        state["jobs"] = [job for job in state.get("jobs", []) if job["pid"] not in finished]
-        config.save_state(state)
+            text = _("see {log}", log=job["log"])
+        result.append((job, status, text))
     return result
 
 
+def mark_seen(pids):
+    """The user was told these jobs finished."""
+    pids = set(pids)
+    if pids:
+        config.update_state(lambda state: [job.update(seen=True) for job in state.get("jobs", [])
+                                           if job["pid"] in pids])
+
+
 def running_audio():
-    return {job["audio"] for job in config.load_state().get("jobs", [])}
+    """Audio files being transcribed right now."""
+    return {job["audio"] for job in config.load_state().get("jobs", [])
+            if not job.get("status") and is_alive(job["pid"])}
 
 
 def untranscribed(folder, limit=30):

@@ -12,6 +12,11 @@ chosen by the user.
 """
 import json
 import os
+import re
+import tempfile
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import platformdirs
@@ -49,40 +54,106 @@ def _state_path():
     return data_dir() / "state.json"
 
 
+def _retry(action, attempts=20):
+    """On Windows a file another process is reading can't be replaced for a
+    moment (PermissionError): try again for up to ~1 s."""
+    for i in range(attempts):
+        try:
+            return action()
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05)
+
+
 def write_json(path, data, indent=2):
     """Atomic write: the terminal menu, the web and background jobs may read a
-    file while another one writes it."""
+    file while another one writes it. Each write uses its own temporary file."""
     path = Path(path)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=indent, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=indent, ensure_ascii=False)
+        _retry(lambda: os.replace(tmp, path))
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def read_json(path):
+    return _retry(lambda: json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+@contextmanager
+def locked(name="state", timeout=10.0):
+    """Exclusive section between threads and processes (web, menu, jobs) for
+    read-modify-write. A lock file older than `timeout` is from a process that
+    died, and is taken over."""
+    lock = data_dir() / f".{name}.lock"
+    with _THREAD_LOCK:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                break
+            except FileExistsError:
+                try:
+                    if time.time() - lock.stat().st_mtime > timeout:
+                        lock.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    continue
+                if time.monotonic() > deadline:
+                    lock.unlink(missing_ok=True)  # stuck: better than not saving at all
+                    continue
+                time.sleep(0.02)
+        try:
+            yield
+        finally:
+            lock.unlink(missing_ok=True)
+
+
+_THREAD_LOCK = threading.RLock()
 
 
 # ── State (last project and folders, running jobs, preferences) ──────────────
-# Keys: last_project, project_dirs {project: folder}, jobs [{audio, log, pid}],
-# theme (system/light/dark), language, output_device, mic.
+# Keys: last_project, project_dirs {project: folder}, jobs [{audio, log, pid,
+# project, engine, status, ended}], theme (system/light/dark), language,
+# output_device, mic, gpu.
 
 def load_state():
     path = _state_path()
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {}
-    return {}
+    if not path.exists():
+        return {}
+    try:
+        data = read_json(path)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
-def save_state(state):
-    write_json(_state_path(), state)
-
-
-def update_state(**changes):
-    """Read, change and save: never save an old state on top of the jobs that
-    another window may have added in the meantime."""
-    state = load_state()
-    state.update(changes)
-    save_state(state)
-    return state
+def update_state(change=None, **changes):
+    """Read, change and save under the lock, so nothing another window or a
+    background job saved in between is lost. `change(state)` may modify the
+    state in place; keyword arguments are set as they are. If the file exists
+    but can't be read, it's kept as state.json.broken instead of being
+    replaced by an empty state."""
+    with locked():
+        path = _state_path()
+        state = {}
+        if path.exists():
+            try:
+                state = read_json(path)
+            except (OSError, json.JSONDecodeError):
+                _retry(lambda: os.replace(path, path.with_name("state.json.broken")))
+            if not isinstance(state, dict):
+                state = {}
+        if change:
+            change(state)
+        state.update(changes)
+        write_json(path, state)
+        return state
 
 
 def project_dir(project):
@@ -91,9 +162,7 @@ def project_dir(project):
 
 
 def set_project_dir(project, folder):
-    state = load_state()
-    state.setdefault("project_dirs", {})[project] = str(folder)
-    save_state(state)
+    update_state(lambda state: state.setdefault("project_dirs", {}).__setitem__(project, str(folder)))
 
 
 def list_projects():
@@ -103,10 +172,36 @@ def list_projects():
     )
 
 
+# Not valid in file names on Windows (and "/" nowhere)
+_INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+
+
+def clean_name(text):
+    """A text made safe as a file name on Windows and Linux: invalid
+    characters become "_", no trailing dots or spaces."""
+    text = _INVALID.sub("_", text or "").strip().rstrip(". ")
+    return "" if text in ("", ".", "..") else text
+
+
+def check_project_name(name):
+    """The name stripped, or ValueError if it can't be a project (it names a file)."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError(_("The project needs a name"))
+    if clean_name(name) != name or name.lower() in _RESERVED or name.endswith(".audit_ok") or len(name) > 60:
+        raise ValueError(_("{name} can't be a project name: use letters, numbers, spaces, - or _", name=name))
+    return name
+
+
 def create_project(name):
+    """Creates the project's (empty) voice library if it doesn't exist.
+    Returns the clean name; ValueError if it's not valid."""
+    name = check_project_name(name)
     path = voiceprints_dir() / f"{name}.json"
     if not path.exists():
-        path.write_text("{}", encoding="utf-8")
+        write_json(path, {})
+    return name
 
 
 # ── Secrets (AssemblyAI and Hugging Face keys) ───────────────────────────────

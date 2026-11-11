@@ -1,5 +1,6 @@
 """Transcribe: the running transcriptions (of every project) and the current
 project's untranscribed audio."""
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -150,26 +151,38 @@ def page():
         if path := await choose_path(folder["path"], folders=False):
             await transcribe(path)
 
-    # check_jobs() reports each finished job only once: they're kept here to
-    # keep showing them while the page is open
-    finished = []
-    shown = {"signature": None}
+    # Finished jobs shown: the ones the user hadn't been told about when the
+    # page opened, and the ones that end while it's open
+    opened = time.time()
+    shown = {"signature": None, "pids": set(), "told": set()}
 
     def read():
-        new = jobs.check_jobs()
+        all_jobs = jobs.check_jobs()
         infos = {job["pid"]: jobs.progress_info(job["log"], job.get("engine"))
-                 for job, status, _text in new if status == "running"}
-        return new, infos
+                 for job, status, _text in all_jobs if status == "running"}
+        return all_jobs, infos
 
     async def draw_running():
-        new, infos = await run.io_bound(read)
-        for job, status, _text in new:
-            if status == "done":
-                ui.notify(_("Done: {name}", name=Path(job["audio"]).name), type="positive")
-            elif status == "failed":
-                ui.notify(_("Failed: {name}", name=Path(job["audio"]).name), type="negative")
-        finished.extend(x for x in new if x[1] != "running")
-        active = [job for job, status, _text in new if status == "running"]
+        all_jobs, infos = await run.io_bound(read)
+        finished = []
+        for job, status, text in all_jobs:
+            if status == "running":
+                continue
+            pid = job["pid"]
+            if job.get("ended", 0) >= opened and pid not in shown["told"]:
+                name = Path(job["audio"]).name
+                if status == "done":
+                    ui.notify(_("Done: {name}", name=name), type="positive")
+                else:
+                    ui.notify(_("Failed: {name}", name=name), type="negative")
+            if pid in shown["pids"] or not job.get("seen") or job.get("ended", 0) >= opened:
+                shown["pids"].add(pid)
+                finished.append((job, status, text))
+        new_told = {job["pid"] for job, _status, _text in finished} - shown["told"]
+        shown["told"] |= new_told
+        if new_told:
+            await run.io_bound(jobs.mark_seen, new_told)
+        active = [job for job, status, _text in all_jobs if status == "running"]
         # Redrawn only when something changed, so nothing blinks
         signature = ([(j["pid"], infos[j["pid"]]["text"]) for j in active],
                      [(j["pid"], status) for j, status, _text in finished])

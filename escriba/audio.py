@@ -67,7 +67,10 @@ def read_clip(path, start, end):
     """(mono float32 samples, sample rate) between start and end, in seconds."""
     with sf.SoundFile(str(path)) as f:
         sr = f.samplerate
-        f.seek(int(start * sr))
+        first = max(0, int(start * sr))
+        if first >= f.frames or end <= start:  # outside the audio: nothing
+            return np.zeros(0, dtype="float32"), sr
+        f.seek(first)
         data = f.read(int((end - start) * sr), dtype="float32", always_2d=True)
     return _to_mono(data), sr
 

@@ -42,7 +42,7 @@ What it does, step by step:
 Then:
 - **First run:** go to *Settings* and paste your AssemblyAI key. It is stored in `%LOCALAPPDATA%\escriba\secrets.env`.
 - **If the microphone records nothing:** Windows Settings > Privacy & security > Microphone > "Let desktop apps access your microphone".
-- **Update:** run the script again. If local mode is installed, it is kept.
+- **Update:** download the new version and run its `install.ps1` (or this one with `-Source <URL of the GitHub .zip>`). Close escriba first. Local mode and the GPU version are kept if installed.
 - **Uninstall:** `install.ps1 -Uninstall`. Removes the program and the shortcuts; your data (voices, glossary, keys) stays in `%LOCALAPPDATA%\escriba`.
 
 The script doesn't need git: if it's not next to the code, it downloads the repository .zip from GitHub (`-Source` to point to another folder or URL). Its messages are in Spanish if Windows is in Spanish.

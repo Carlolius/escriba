@@ -25,3 +25,14 @@ def test_short_and_silent_audio():
     for wav in (_signal(800), np.zeros(16000, dtype="float32") + 1e-6):
         emb = encoder.embed(wav)
         assert emb.shape == (256,) and abs(float(np.linalg.norm(emb)) - 1) < 1e-5
+
+
+def test_other_rates_and_stereo_give_the_same_voiceprint():
+    def signal(rate):
+        t = np.arange(3 * rate) / rate
+        return (0.1 * np.sin(2 * np.pi * (150 + 200 * t) * t) * np.sin(2 * np.pi * 3 * t)).astype("float32")
+
+    reference = encoder.embed(signal(16000))
+    assert float(encoder.embed(signal(48000), 48000) @ reference) > 0.99
+    stereo = np.stack([signal(44100)] * 2, axis=1)
+    assert float(encoder.embed(stereo, 44100) @ reference) > 0.99

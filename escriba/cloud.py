@@ -64,14 +64,32 @@ def upload(session, path):
     return r.json()["upload_url"]
 
 
+MAX_WAIT = 6 * 3600      # seconds: something is wrong if it takes longer
+NETWORK_RETRIES = 40     # consecutive failed checks (~5 min) before giving up
+
+
 def wait(session, transcript_id):
-    """AssemblyAI gives no percentage: show the status and the time so far."""
+    """AssemblyAI gives no percentage: show the status and the time so far.
+    A network hiccup doesn't lose the transcription: it keeps asking."""
     start, last_status, last_print = time.time(), None, 0.0
     tty = sys.stdout.isatty()
+    failures = 0
     while True:
-        r = session.get(f"{API}/transcript/{transcript_id}", timeout=60)
-        r.raise_for_status()
-        data = r.json()
+        if time.time() - start > MAX_WAIT:
+            raise CloudError(_("AssemblyAI didn't finish in {hours} h (transcript {id})",
+                               hours=MAX_WAIT // 3600, id=transcript_id))
+        try:
+            r = session.get(f"{API}/transcript/{transcript_id}", timeout=60)
+            r.raise_for_status()
+            data = r.json()
+            failures = 0
+        except requests.RequestException as e:
+            failures += 1
+            if failures >= NETWORK_RETRIES:
+                raise
+            print(_("Network error, trying again: {error}", error=e), flush=True)
+            time.sleep(min(30, 2 * failures))
+            continue
         status = data["status"]
         if status in ("completed", "error"):
             if tty:
@@ -166,7 +184,5 @@ def transcribe(audio, out, language="auto", diarize=False, project="", speakers=
     except requests.RequestException as e:
         print(_("WARNING: couldn't delete transcript {id} from AssemblyAI: {error}", id=transcript_id, error=e))
 
-    names = None
-    if turns:
-        names = speakers_mod.name_speakers(str(audio), str(out), turns, project, speakers)
+    names = speakers_mod.safe_name_speakers(audio, out, turns, project, speakers) if turns else None
     speakers_mod.write_transcript(str(out), segments, turns, names)

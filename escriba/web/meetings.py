@@ -116,7 +116,13 @@ def page():
                 ui.button(_("Delete"), icon="delete", color="negative", on_click=lambda: d.submit(True))
         if not await d:
             return
-        n_files, n_deleted = await run.io_bound(meetings.delete, audio, bool(with_samples and with_samples.value))
+        try:
+            n_files, n_deleted = await run.io_bound(meetings.delete, audio,
+                                                    bool(with_samples and with_samples.value))
+        except RuntimeError as e:
+            ui.notify(str(e), type="negative", multi_line=True)
+            await load()
+            return
         text = _n("{n} file deleted", "{n} files deleted", n_files)
         if n_deleted:
             text += " · " + _n("{n} sample deleted (can be undone in People)",

@@ -14,10 +14,9 @@ The .speakers.json ("sidecar") holds one cluster per detected voice:
       "similarity", "speech_seconds", "embedding",
       "origin": {"audio", "start", "end"}, "reviewed"}}}
 """
-import json
 import os
 
-from . import encoder, voiceprints
+from . import config, encoder, voiceprints
 from .i18n import _
 
 
@@ -63,13 +62,13 @@ def name_speakers(audio, out, turns, project, speakers):
                     break
                 dur = min(e - s, 8.0)
                 f.seek(int(s * sr))
-                chunks.append(f.read(int(dur * sr), dtype="float32"))
+                chunks.append(f.read(int(dur * sr), dtype="float32", always_2d=True))
                 collected += dur
         if not chunks:
             unmatched += 1
             names[spk] = _fallback_name(speakers, unmatched)
             continue
-        emb = encoder.embed(np.concatenate(chunks))
+        emb = encoder.embed(np.concatenate(chunks), sr)
         name, sim = voiceprints.identify(emb, library)
         if name:
             names[spk] = name
@@ -89,36 +88,63 @@ def name_speakers(audio, out, turns, project, speakers):
         }
 
     sidecar = os.path.splitext(out)[0] + ".speakers.json"
-    with open(sidecar, "w", encoding="utf-8") as f:
-        json.dump({"project": project, "clusters": clusters}, f, ensure_ascii=False)
+    config.write_json(sidecar, {"project": project, "clusters": clusters}, indent=None)
     print(_("  Saved {path} (to review the speakers later)", path=sidecar))
     return names
 
 
+def safe_name_speakers(audio, out, turns, project, speakers):
+    """name_speakers, but a failure there (a damaged library, an unreadable
+    file) costs the names, not the transcription: it returns None and the
+    .txt is written with the generic speaker ids."""
+    try:
+        return name_speakers(str(audio), str(out), turns, project, list(speakers))
+    except Exception as e:
+        print(_("WARNING: couldn't identify the voices ({error}): the transcript keeps generic speakers",
+                error=e), flush=True)
+        return None
+
+
 def write_transcript(out, segments, turns=None, names=None):
     """Writes the .txt. With speaker turns, each segment goes to the speaker
-    with the most overlap in time, with a header on every change."""
+    with the most overlap in time, with a header on every change of speaker
+    (of cluster: two clusters with the same name get separate headers). Where
+    each cluster's headers are is saved in the sidecar ("headers"), so that
+    correcting one cluster in the review renames only its own lines."""
+    names = names or {}
+
     def speaker_at(start, end):
         best, best_overlap = None, 0.0
         for t0, t1, spk in turns:
             overlap = min(end, t1) - max(start, t0)
             if overlap > best_overlap:
                 best_overlap, best = overlap, spk
-        return names.get(best, best) if best else "?"
+        return best
 
+    headers = {}
+    lines = []
+    previous = object()
+    for start, end, text in segments:
+        if turns:
+            spk = speaker_at(start, end)
+            if spk != previous:
+                lines.append(f"\n[{int(start)}s] {names.get(spk, spk) if spk else '?'}:\n{text}")
+                if spk:
+                    headers.setdefault(spk, []).append(int(start))
+                previous = spk
+                continue
+        lines.append(f"[{int(start)}s] {text}")
     with open(out, "w", encoding="utf-8") as f:
-        previous = None
-        for start, end, text in segments:
-            if turns:
-                speaker = speaker_at(start, end)
-                if speaker != previous:
-                    line = f"\n[{int(start)}s] {speaker}:\n{text}"
-                    previous = speaker
-                else:
-                    line = f"[{int(start)}s] {text}"
-            else:
-                line = f"[{int(start)}s] {text}"
+        for line in lines:
             print(line)
             f.write(line + "\n")
 
+    sidecar = os.path.splitext(out)[0] + ".speakers.json"
+    if turns and os.path.exists(sidecar):
+        try:
+            data = config.read_json(sidecar)
+            data["headers"] = headers
+            config.write_json(sidecar, data, indent=None)
+        except (OSError, ValueError):
+            pass
     print("\n" + _("Saved: {path}", path=out))

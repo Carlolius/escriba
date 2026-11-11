@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import jobs, voiceprints
+from .i18n import _
 from .review import SUFFIX
 
 AUDIO = (".wav", ".opus")
@@ -72,9 +73,21 @@ def list_meetings(folder, recording=None, limit=200):
 def delete(audio, delete_samples=False):
     """Deletes the meeting's files and, if asked, the voice samples taken from
     it (otherwise they stay in the library but can't be played any more).
+    Refuses while it's being transcribed. Files first: if one can't be
+    deleted (open in another program, on Windows), the samples are kept.
     Returns (files deleted, samples deleted)."""
-    files = files_of(audio)
+    audio = Path(audio)
+    if str(audio.resolve()) in jobs.running_audio():
+        raise RuntimeError(_("{name} is being transcribed: wait until it ends", name=audio.stem))
+    deleted = 0
+    for p in files_of(audio):
+        try:
+            p.unlink()
+            deleted += 1
+        except FileNotFoundError:
+            pass
+        except PermissionError as e:
+            raise RuntimeError(_("Can't delete {name}: it's open in another program ({error})",
+                                 name=p.name, error=e)) from e
     samples = voiceprints.delete_samples_from_audio(audio) if delete_samples else 0
-    for p in files:
-        p.unlink()
-    return len(files), samples
+    return deleted, samples

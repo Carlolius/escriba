@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from . import archive, config, voiceprints
+from .i18n import _
 
 SUFFIX = ".speakers.json"
 
@@ -101,7 +102,9 @@ def decide(sidecar, spk, new_name, project=None):
         emb = np.array(info["embedding"], dtype="float32")
         result["samples"], result["added"] = voiceprints.add_sample(project, new_name, emb, origin=info.get("origin"))
         if new_name != info["name"]:
-            result["renamed"] = _rename_in_txt(txt_path(sidecar), info["name"], new_name)
+            # Only this cluster's lines; transcripts from before "headers" existed rename them all
+            starts = data.get("headers", {}).get(spk)
+            result["renamed"] = _rename_in_txt(txt_path(sidecar), info["name"], new_name, starts)
         info["name"] = new_name
         info["unnamed"] = False
 
@@ -131,18 +134,29 @@ def enroll(audio, start, end, name, project):
     """Adds a voice sample by hand (the start-end clip of an audio file)."""
     from . import audio as audio_util, encoder
 
-    data, _sr = audio_util.read_clip(audio, start, end)
-    emb = encoder.embed(data)
+    data, sr = audio_util.read_clip(audio, start, end)
+    if len(data) == 0:
+        raise ValueError(_("That clip is empty: check the start and the end"))
+    emb = encoder.embed(data, sr)
     origin = {"audio": str(Path(audio).resolve()), "start": float(start), "end": float(end)}
     return voiceprints.add_sample(project, name, emb, origin=origin)
 
 
-def _rename_in_txt(txt, old_name, new_name):
+def _rename_in_txt(txt, old_name, new_name, starts=None):
+    """Renames the "[12s] Name:" headers; with `starts`, only the ones at those seconds."""
     if not txt.exists():
         return 0
-    pattern = rf"^(\[\d+s\]) {re.escape(old_name)}:$"
-    text, n = re.subn(pattern, lambda m: f"{m.group(1)} {new_name}:", txt.read_text(encoding="utf-8"),
-                      flags=re.MULTILINE)
+    pattern = rf"^\[(\d+)s\] {re.escape(old_name)}:$"
+    keep = None if starts is None else set(starts)
+
+    def replace(m):
+        if keep is not None and int(m.group(1)) not in keep:
+            return m.group(0)
+        return f"[{m.group(1)}s] {new_name}:"
+
+    original = txt.read_text(encoding="utf-8")
+    text = re.sub(pattern, replace, original, flags=re.MULTILINE)
+    n = sum(1 for a, b in zip(original.splitlines(), text.splitlines(), strict=True) if a != b)
     if n:
         txt.write_text(text, encoding="utf-8")
     return n

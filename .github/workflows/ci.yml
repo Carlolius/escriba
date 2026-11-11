@@ -5,13 +5,20 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   tests:
-    name: Tests (${{ matrix.os }})
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        python: ["3.11"]
+        include:
+          - {os: ubuntu-latest, python: "3.10"}
+          - {os: ubuntu-latest, python: "3.12"}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +26,7 @@ jobs:
       - name: Install
         shell: bash
         run: |
-          uv venv --python 3.11 .venv
+          uv venv --python ${{ matrix.python }} .venv
           uv pip install -e . pytest
       - name: Tests
         shell: bash
@@ -48,7 +55,7 @@ jobs:
             Start-Sleep -Seconds 2
             try { if ((Invoke-WebRequest 'http://127.0.0.1:8765/settings' -UseBasicParsing).StatusCode -eq 200) { $ok = $true; break } } catch {}
           }
-          Stop-Process $web.Id -Force
+          taskkill /PID $web.Id /T /F | Out-Null   # the whole tree: escriba.exe starts python.exe
           if (-not $ok) { throw "The web didn't answer" }
       - name: Uninstall
         shell: powershell

@@ -228,9 +228,17 @@ def page():
             with ui.row().classes("w-full justify-end"):
                 ui.button(_("Cancel"), on_click=lambda: d.submit(False)).props("flat")
                 ui.button(_("Add"), on_click=lambda: d.submit(True))
-        if not await d or not (name.value or "").strip() or (end.value or 0) <= (start.value or 0):
+        if not await d or not (name.value or "").strip():
             return
-        n, added = await run.io_bound(review.enroll, path, start.value, end.value, name.value.strip(), current)
+        begin, finish = float(start.value or 0), float(end.value or 0)
+        if finish <= begin:
+            ui.notify(_("The end must come after the start"), type="warning")
+            return
+        try:
+            n, added = await run.io_bound(review.enroll, path, begin, finish, name.value.strip(), current)
+        except Exception as e:
+            ui.notify(_("Can't add it: {error}", error=e), type="negative", multi_line=True)
+            return
         text = _n("{name}: {n} sample", "{name}: {n} samples", n, name=name.value)
         if not added:
             text += " " + _("(there was already an almost identical one)")

@@ -45,11 +45,17 @@ def cmd_record(a):
         for name, default in devices["mics"]:
             print(f"  {name}" + (_(" (default)") if default else ""))
         return
-    target = Path(a.dir).expanduser() / f"{a.name or record.default_name()}.wav"
+    stem = config.clean_name(a.name) if a.name else record.default_name()
+    if not stem:
+        sys.exit(_("Invalid name: {name}", name=a.name))
+    target = record.free_target(Path(a.dir).expanduser(), stem)
     r = record.Recording(target, output=a.output, mic=a.mic)
+    try:
+        r.start()
+    except Exception as e:
+        sys.exit(_("Can't record: {error}", error=e))
     print(_("Recording to: {path}\n  What plays: {output}\n  Microphone: {mic}\nCtrl+C to stop.",
             path=target, output=r.loop.name, mic=r.mic.name))
-    r.start()
     try:
         while True:
             time.sleep(1)
@@ -191,7 +197,10 @@ def parser():
 
 
     def command(name, **kwargs):
-        return _translated(subparsers.add_parser(name, formatter_class=_Formatter, add_help=False, **kwargs))
+        sub = _translated(subparsers.add_parser(name, formatter_class=_Formatter, add_help=False, **kwargs))
+        # Also accepted after the command (it's read before parsing, see _early_lang)
+        sub.add_argument("--lang", choices=sorted(i18n.LANGUAGES), default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        return sub
 
     r = command("record", help=_("record a meeting"),
                        description=_("Records what plays on the PC + your microphone, mixed, to a 16 kHz mono WAV."))

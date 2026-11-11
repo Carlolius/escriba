@@ -42,7 +42,7 @@ Qué hace, paso a paso:
 Después:
 - **La primera vez:** ve a *Ajustes* y pega tu clave de AssemblyAI. Se guarda en `%LOCALAPPDATA%\escriba\secrets.env`.
 - **Si el micrófono no graba nada:** Configuración de Windows > Privacidad y seguridad > Micrófono > "Permitir que las aplicaciones de escritorio accedan al micrófono".
-- **Actualizar:** vuelve a ejecutar el script. Si el modo local está instalado, se mantiene.
+- **Actualizar:** descarga la versión nueva y ejecuta su `install.ps1` (o este con `-Source <URL del .zip de GitHub>`). Cierra escriba antes. El modo local y la versión para GPU se mantienen si están instalados.
 - **Desinstalar:** `install.ps1 -Uninstall`. Quita el programa y los accesos directos; tus datos (voces, glosario, claves) se quedan en `%LOCALAPPDATA%\escriba`.
 
 El script no necesita git: si no está junto al código, descarga el .zip del repositorio desde GitHub (`-Source` para indicar otra carpeta o URL). Si Windows está en castellano, sus mensajes también.

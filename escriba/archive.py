@@ -10,6 +10,7 @@ It runs on its own when the review of a meeting is finished; to convert
 everything already reviewed at once: escriba archive (see --help).
 """
 import json
+import os
 from pathlib import Path
 
 from . import audio as audio_util
@@ -55,7 +56,7 @@ def update_paths(old, new):
         data = json.loads(path.read_text(encoding="utf-8"))
         changes = sum(_replace_in_samples(s, old, new) for s in data.values() if isinstance(s, list))
         if changes:
-            path.write_text(json.dumps(data), encoding="utf-8")
+            config.write_json(path, data, indent=None)
             total += changes
 
     # The sidecar may still be next to the old path or have moved with the audio
@@ -77,13 +78,15 @@ def archive(wav):
     opus = wav.with_suffix(".opus")
     tmp = opus.with_name(opus.name + ".tmp")
     dur_wav = audio_util.duration(wav)
+    if dur_wav is None:
+        raise RuntimeError(_("{name}: can't read the audio", name=wav.name))
     audio_util.compress_opus(wav, tmp)
     dur_opus = audio_util.duration(tmp) or 0
     if abs(dur_wav - dur_opus) > 0.5:
         tmp.unlink()
         raise RuntimeError(_("{name}: different duration after converting ({wav:.1f}s vs {opus:.1f}s)",
                              name=wav.name, wav=dur_wav, opus=dur_opus))
-    tmp.rename(opus)
+    os.replace(tmp, opus)  # also if an earlier attempt left the .opus behind
     saved = wav.stat().st_size - opus.stat().st_size
     refs = update_paths(wav, opus)
     wav.unlink()

@@ -377,7 +377,6 @@
  "{name}: done": "{name}: terminada",
  "{name}: failed": "{name}: falló",
  "Records what plays on the PC (the people on the call) and your microphone, mixed.": "Graba lo que suena en el PC (la gente de la llamada) y tu micrófono, mezclados.",
- "{name} already exists: change the description": "Ya existe {name}: cambia la descripción",
  "Recorded {name} ({duration})": "Grabado {name} ({duration})",
  "Tell the others you are recording the meeting before you start.": "Avisa a los demás de que grabas la reunión antes de empezar.",
  "Start recording": "Empezar a grabar",
@@ -559,5 +558,19 @@
  "Install": "Instalar",
  "If the GPU fails (old driver, too little memory), it goes on with the CPU and says so in the log.": "Si la GPU falla (driver antiguo, poca memoria), sigue con la CPU y lo indica en el registro.",
  "Local mode is installed for the CPU. The GPU version is much faster, but takes ~{size} GB.": "El modo local está instalado para CPU. La versión para GPU es mucho más rápida, pero ocupa ~{size} GB.",
- "Free and the audio never leaves the PC. It will use the GPU ({name}, experimental): much faster than the CPU, and if it fails it goes on with the CPU.": "Gratis y el audio no sale del PC. Usará la GPU ({name}, experimental): mucho más rápido que la CPU y, si falla, sigue con la CPU."
+ "Free and the audio never leaves the PC. It will use the GPU ({name}, experimental): much faster than the CPU, and if it fails it goes on with the CPU.": "Gratis y el audio no sale del PC. Usará la GPU ({name}, experimental): mucho más rápido que la CPU y, si falla, sigue con la CPU.",
+ "The end must come after the start": "El final tiene que ir después del inicio",
+ "The project needs a name": "El proyecto necesita un nombre",
+ "{name} can't be a project name: use letters, numbers, spaces, - or _": "{name} no puede ser nombre de proyecto: usa letras, números, espacios, - o _",
+ "WARNING: couldn't identify the voices ({error}): the transcript keeps generic speakers": "AVISO: no se pudieron identificar las voces ({error}): la transcripción se queda con hablantes genéricos",
+ "AssemblyAI didn't finish in {hours} h (transcript {id})": "AssemblyAI no terminó en {hours} h (transcripción {id})",
+ "Network error, trying again: {error}": "Error de red, se vuelve a intentar: {error}",
+ "{name} is being transcribed: wait until it ends": "{name} se está transcribiendo: espera a que termine",
+ "Can't delete {name}: it's open in another program ({error})": "No se puede borrar {name}: está abierto en otro programa ({error})",
+ "WARNING: separating speakers failed ({error}): the transcript is saved without speakers": "AVISO: ha fallado la separación de hablantes ({error}): la transcripción se guarda sin hablantes",
+ "Invalid name: {name}": "Nombre no válido: {name}",
+ "That clip is empty: check the start and the end": "Ese fragmento está vacío: revisa el inicio y el final",
+ "{name}: can't read the audio": "{name}: no se puede leer el audio",
+ "Can't add it: {error}": "No se puede añadir: {error}",
+ "Can't start the transcription: {error}": "No se puede empezar la transcripción: {error}"
 }

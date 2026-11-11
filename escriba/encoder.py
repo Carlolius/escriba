@@ -78,10 +78,27 @@ def _partial_slices(n_samples, rate=1.3, min_coverage=0.75):
     return starts
 
 
-def embed(wav):
-    """Embedding (256 floats, L2-normalized) of a 16 kHz mono utterance: the
-    average of overlapping 1.6 s pieces, like VoiceEncoder.embed_utterance."""
+def to_16k_mono(wav, sr):
+    """Mixes channels down and resamples to 16 kHz (in the frequency domain:
+    no aliasing, and it's only used on clips of a few seconds)."""
     wav = np.asarray(wav, dtype=np.float32)
+    if wav.ndim > 1:
+        wav = wav.mean(axis=1)
+    if sr == SR or len(wav) == 0:
+        return wav
+    n = max(1, int(round(len(wav) * SR / sr)))
+    spectrum = np.fft.rfft(wav)
+    kept = np.zeros(n // 2 + 1, dtype=spectrum.dtype)
+    k = min(len(kept), len(spectrum))
+    kept[:k] = spectrum[:k]
+    return (np.fft.irfft(kept, n) * (n / len(wav))).astype(np.float32)
+
+
+def embed(wav, sr=SR):
+    """Embedding (256 floats, L2-normalized) of an utterance (any rate, mono
+    or not): the average of overlapping 1.6 s pieces, like
+    VoiceEncoder.embed_utterance."""
+    wav = to_16k_mono(wav, sr)
     starts = _partial_slices(len(wav))
     needed = (starts[-1] + PARTIAL_FRAMES) * HOP
     if needed >= len(wav):

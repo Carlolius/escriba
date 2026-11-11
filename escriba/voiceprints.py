@@ -10,9 +10,7 @@ voiceprints/<project>.json: {name: [sample, ...]}, each sample being
 "id" is stable (it doesn't change when other samples are deleted or moved) and
 is what delete_sample/move_sample use to point at a sample.
 """
-import json
 import os
-import shutil
 import uuid
 from pathlib import Path
 
@@ -29,11 +27,12 @@ def library_path(project):
 
 
 def _backup(path):
-    """One-step backup before a destructive operation (delete, move). It's
-    overwritten every time: it keeps the state just before the last change,
-    not a full history."""
+    """One-step backup before a destructive operation (delete, move, rename).
+    It keeps the state just before that change, not a full history; any
+    later change that isn't backed up (a sample added in a review) drops it,
+    so that undoing never throws that change away."""
     if os.path.exists(path):
-        shutil.copy2(path, path + ".bak")
+        config.write_json(path + ".bak", _load(path), indent=None)
 
 
 def has_backup(project):
@@ -45,21 +44,24 @@ def restore_backup(project):
     path = library_path(project)
     if not os.path.exists(path + ".bak"):
         return False
-    shutil.copy2(path + ".bak", path)
+    config.write_json(path, _load(path + ".bak"), indent=None)
     return True
 
 
 def _load(path):
     if not os.path.exists(path):
         return {}
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    return config.read_json(path)
 
 
-def _save(path, data):
+def _save(path, data, backed_up=False):
+    """Atomic: a crash halfway, or a background job reading it, never sees
+    half a library. backed_up: _backup() was called for this change;
+    otherwise the old backup no longer describes "the last change"."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+    config.write_json(path, data, indent=None)
+    if not backed_up and os.path.exists(path + ".bak"):
+        os.remove(path + ".bak")
 
 
 def load_library(project):
@@ -124,7 +126,7 @@ def delete_person(project, name):
         return False
     _backup(path)
     del data[name]
-    _save(path, data)
+    _save(path, data, backed_up=True)
     return True
 
 
@@ -147,7 +149,7 @@ def delete_sample(project, name, sample_id):
     samples.pop(i)
     if not samples:
         del data[name]
-    _save(path, data)
+    _save(path, data, backed_up=True)
     return True
 
 
@@ -165,7 +167,7 @@ def move_sample(project, current_name, sample_id, new_name):
     if not samples:
         del data[current_name]
     data.setdefault(new_name, []).append(sample)
-    _save(path, data)
+    _save(path, data, backed_up=True)
     return True
 
 
@@ -179,7 +181,7 @@ def rename_person(project, old_name, new_name):
         return None
     _backup(path)
     data.setdefault(new_name, []).extend(data.pop(old_name))
-    _save(path, data)
+    _save(path, data, backed_up=True)
     return len(data[new_name])
 
 
@@ -213,7 +215,7 @@ def delete_samples_from_audio(audio):
                 data[name] = kept
             else:
                 del data[name]
-        _save(path, data)
+        _save(path, data, backed_up=True)
     return total
 
 # ── Audit ────────────────────────────────────────────────────────────────────
@@ -228,8 +230,7 @@ def load_audit_ok(project):
     path = _audit_ok_path(project)
     if not os.path.exists(path):
         return set()
-    with open(path, encoding="utf-8") as f:
-        return {tuple(x) for x in json.load(f)}
+    return {tuple(x) for x in config.read_json(path)}
 
 
 def finding_key(kind, id_a, id_b):
@@ -240,9 +241,7 @@ def mark_as_ok(project, kind, id_a, id_b):
     path = _audit_ok_path(project)
     ok = load_audit_ok(project)
     ok.add(finding_key(kind, id_a, id_b))
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump([list(k) for k in ok], f)
+    config.write_json(path, sorted(list(k) for k in ok), indent=None)
 
 
 def audit_library(project, confusion_threshold=0.80, include_ok=False):
