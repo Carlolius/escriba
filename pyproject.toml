@@ -1,27 +1,29 @@
 [project]
 name = "escriba"
 version = "0.2.0"
-description = "Grabar, transcribir e identificar hablantes en reuniones (local o en la nube)"
+description = "Record, transcribe and identify speakers in meetings, locally or in the cloud"
 readme = "README.md"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "numpy",
-    "soundfile>=0.12",          # WAV y Ogg/Opus sin ffmpeg (libsndfile viene en la wheel)
-    "soundcard>=0.4.4",         # grabar y reproducir: WASAPI en Windows, PulseAudio/PipeWire en Linux
+    "soundfile>=0.12",          # WAV and Ogg/Opus without ffmpeg (libsndfile ships in the wheel)
+    "soundcard>=0.4.4",         # record and play: WASAPI on Windows, PulseAudio/PipeWire on Linux
     "requests",
     "rich",
     "questionary",
     "psutil",
     "platformdirs",
-    "nicegui>=4",              # interfaz web
-    # Identificación por voz (también en modo nube: se hace en local)
+    "nicegui>=4",              # web interface
+    # Voice identification (also in cloud mode: it runs locally)
     "resemblyzer",
-    "webrtcvad-wheels",         # sustituye a webrtcvad, que en Windows necesita compilador
-    "setuptools<81",            # webrtcvad usa pkg_resources, eliminado en setuptools 81
+    "webrtcvad-wheels",         # replaces webrtcvad, which needs a compiler on Windows
+    "setuptools<81",            # webrtcvad uses pkg_resources, removed in setuptools 81
 ]
 
 [project.optional-dependencies]
-# Transcripción y diarización en este PC (pesado: torch + modelos)
+# Transcription and diarization on this PC (heavy: torch + models)
 local = [
     "faster-whisper>=1.1",
     "pyannote.audio>=3.3",
@@ -31,15 +33,15 @@ local = [
 escriba = "escriba.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["escriba"]
 
 [tool.uv]
-# resemblyzer pide "webrtcvad", que no tiene wheels para Windows; webrtcvad-wheels
-# instala el mismo módulo. Esta marca nunca se cumple, así que no se instala.
+# resemblyzer asks for "webrtcvad", which has no Windows wheels; webrtcvad-wheels
+# installs the same module. This marker is never true, so it's never installed.
 override-dependencies = ["webrtcvad; sys_platform == 'never'"]
 
 [dependency-groups]

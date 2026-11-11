@@ -1,14 +1,14 @@
-"""Dónde guarda escriba sus datos, y lectura de estado, secretos y glosario.
+"""Where escriba keeps its data, and reading state, secrets and glossary.
 
-Todo lo que es del usuario (librerías de voces, estado del menú, glosario,
-claves) vive en su carpeta de datos, no junto al programa:
+Everything that belongs to the user (voice libraries, state, glossary, keys)
+lives in their data folder, not next to the program:
   Linux:   ~/.local/share/escriba
   Windows: %LOCALAPPDATA%\\escriba
   macOS:   ~/Library/Application Support/escriba
-La variable de entorno ESCRIBA_DATOS la cambia (útil para pruebas).
+The ESCRIBA_DATA environment variable overrides it (useful for tests).
 
-Las grabaciones y transcripciones no se mueven: se quedan en las carpetas de
-cada proyecto que elija el usuario.
+Recordings and transcripts don't move: they stay in each project's folders,
+chosen by the user.
 """
 import json
 import os
@@ -16,146 +16,161 @@ from pathlib import Path
 
 import platformdirs
 
+from .i18n import N_, _
+
 APP = "escriba"
 
 
-def dir_datos():
-    ruta = os.environ.get("ESCRIBA_DATOS")
-    ruta = Path(ruta).expanduser() if ruta else platformdirs.user_data_path(APP, appauthor=False)
-    ruta.mkdir(parents=True, exist_ok=True)
-    return ruta
+def data_dir():
+    path = os.environ.get("ESCRIBA_DATA")
+    path = Path(path).expanduser() if path else platformdirs.user_data_path(APP, appauthor=False)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
-def dir_voiceprints():
-    ruta = dir_datos() / "voiceprints"
-    ruta.mkdir(exist_ok=True)
-    return ruta
+def voiceprints_dir():
+    path = data_dir() / "voiceprints"
+    path.mkdir(exist_ok=True)
+    return path
 
 
-def ruta_glosario():
-    ruta = dir_datos() / "glosario.txt"
-    if not ruta.exists():
-        ruta.write_text(GLOSARIO_INICIAL, encoding="utf-8")
-    return ruta
+def glossary_path():
+    path = data_dir() / "glossary.txt"
+    if not path.exists():
+        path.write_text(_(INITIAL_GLOSSARY), encoding="utf-8")
+    return path
 
 
-def _ruta_estado():
-    return dir_datos() / "estado.json"
+def secrets_path():
+    return data_dir() / "secrets.env"
 
 
-def _ruta_secretos():
-    return dir_datos() / "secretos.env"
+def _state_path():
+    return data_dir() / "state.json"
 
 
-def escribir_json(ruta, datos, indent=2):
-    """Escritura atómica: el menú, la web y las tareas en segundo plano pueden
-    leer el mismo archivo mientras otro lo escribe."""
-    ruta = Path(ruta)
-    tmp = ruta.with_name(ruta.name + ".tmp")
-    tmp.write_text(json.dumps(datos, indent=indent, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, ruta)
+def write_json(path, data, indent=2):
+    """Atomic write: the terminal menu, the web and background jobs may read a
+    file while another one writes it."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=indent, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
 
 
-# ── Estado (últimos proyectos y carpetas, transcripciones en curso) ──────────
+# ── State (last project and folders, running jobs, preferences) ──────────────
+# Keys: last_project, project_dirs {project: folder}, jobs [{audio, log, pid}],
+# theme (system/light/dark), language, output_device, mic.
 
-def cargar_estado():
-    ruta = _ruta_estado()
-    if ruta.exists():
+def load_state():
+    path = _state_path()
+    if path.exists():
         try:
-            return json.loads(ruta.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
     return {}
 
 
-def guardar_estado(estado):
-    escribir_json(_ruta_estado(), estado)
+def save_state(state):
+    write_json(_state_path(), state)
 
 
-def actualizar_estado(**cambios):
-    """Lee, cambia y guarda: nunca se guarda un estado viejo que pise las
-    tareas que haya apuntado otra ventana entretanto."""
-    estado = cargar_estado()
-    estado.update(cambios)
-    guardar_estado(estado)
-    return estado
+def update_state(**changes):
+    """Read, change and save: never save an old state on top of the jobs that
+    another window may have added in the meantime."""
+    state = load_state()
+    state.update(changes)
+    save_state(state)
+    return state
 
 
-def listar_proyectos():
+def project_dir(project):
+    """Last folder used for a project, or None."""
+    return load_state().get("project_dirs", {}).get(project)
+
+
+def set_project_dir(project, folder):
+    state = load_state()
+    state.setdefault("project_dirs", {})[project] = str(folder)
+    save_state(state)
+
+
+def list_projects():
     return sorted(
-        p.stem for p in dir_voiceprints().glob("*.json")
-        if not p.stem.endswith(".audit_confirmados")
+        p.stem for p in voiceprints_dir().glob("*.json")
+        if not p.stem.endswith(".audit_ok")
     )
 
 
-def crear_proyecto(nombre):
-    ruta = dir_voiceprints() / f"{nombre}.json"
-    if not ruta.exists():
-        ruta.write_text("{}", encoding="utf-8")
+def create_project(name):
+    path = voiceprints_dir() / f"{name}.json"
+    if not path.exists():
+        path.write_text("{}", encoding="utf-8")
 
 
-# ── Secretos (claves de AssemblyAI y Hugging Face) ───────────────────────────
+# ── Secrets (AssemblyAI and Hugging Face keys) ───────────────────────────────
 
-def _leer_env(ruta):
-    valores = {}
+def _read_env(path):
+    values = {}
     try:
-        with open(ruta, encoding="utf-8") as f:
-            for linea in f:
-                linea = linea.strip()
-                if linea and not linea.startswith("#") and "=" in linea:
-                    clave, valor = linea.split("=", 1)
-                    valores[clave.strip()] = valor.strip().strip('"').strip("'")
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    values[key.strip()] = value.strip().strip('"').strip("'")
     except OSError:
         pass
-    return valores
+    return values
 
 
-def leer_secreto(nombre):
-    """Primero la variable de entorno; si no, secretos.env de la carpeta de datos."""
-    return os.environ.get(nombre) or _leer_env(_ruta_secretos()).get(nombre)
+def read_secret(name):
+    """The environment variable first; otherwise secrets.env in the data folder."""
+    return os.environ.get(name) or _read_env(secrets_path()).get(name)
 
 
-def guardar_secreto(nombre, valor):
-    """Guarda (o borra, con valor vacío) una clave en secretos.env, cambiando
-    solo su línea: el resto del archivo (otras claves, comentarios) se respeta.
-    secretos.env puede ser un enlace a un .env que ya uses para otras cosas."""
-    ruta = _ruta_secretos()
+def save_secret(name, value):
+    """Save (or delete, with an empty value) a key in secrets.env, changing
+    only its own line: the rest of the file (other keys, comments) is kept.
+    secrets.env may be a link to a .env you already use for other things."""
+    path = secrets_path()
     try:
-        lineas = ruta.read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        lineas = []
-    nuevas, puesta = [], False
-    for linea in lineas:
-        if linea.strip().split("=", 1)[0].strip() == nombre and "=" in linea and not linea.lstrip().startswith("#"):
-            if valor and not puesta:
-                nuevas.append(f"{nombre}={valor}")
-                puesta = True
+        lines = []
+    new, done = [], False
+    for line in lines:
+        if line.strip().split("=", 1)[0].strip() == name and "=" in line and not line.lstrip().startswith("#"):
+            if value and not done:
+                new.append(f"{name}={value}")
+                done = True
             continue
-        nuevas.append(linea)
-    if valor and not puesta:
-        nuevas.append(f"{nombre}={valor}")
-    destino = ruta.resolve()  # si es un enlace, se escribe en el archivo enlazado
-    destino.write_text("\n".join(nuevas) + "\n", encoding="utf-8")
+        new.append(line)
+    if value and not done:
+        new.append(f"{name}={value}")
+    target = path.resolve()  # if it's a link, write the linked file
+    target.write_text("\n".join(new) + "\n", encoding="utf-8")
     if os.name == "posix":
-        destino.chmod(0o600)
+        target.chmod(0o600)
 
 
-# ── Glosario (nombres propios y términos para mejorar la transcripción) ──────
+# ── Glossary (proper names and terms, to improve transcription) ──────────────
 
-def leer_glosario():
-    """Líneas del glosario sin comentarios ni vacías. Cada línea puede llevar
-    varios términos separados por comas."""
-    ruta = ruta_glosario()
-    if not ruta.exists():
+def read_glossary():
+    """Glossary lines without comments or blanks. Each line may hold several
+    comma-separated terms."""
+    path = glossary_path()
+    if not path.exists():
         return []
     return [
-        l.strip() for l in ruta.read_text(encoding="utf-8").splitlines()
-        if l.strip() and not l.strip().startswith("#")
+        line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
     ]
 
 
-GLOSARIO_INICIAL = """\
-# Glosario: nombres propios y términos que salen en tus reuniones.
-# Ayuda a que la transcripción los escriba bien. Uno o varios por línea,
-# separados por comas. Las líneas que empiezan por # se ignoran.
-"""
+INITIAL_GLOSSARY = N_("""\
+# Glossary: proper names and terms that come up in your meetings.
+# It helps the transcription spell them right. One or more per line,
+# separated by commas. Lines starting with # are ignored.
+""")

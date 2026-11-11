@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  pruebas:
-    name: Pruebas (${{ matrix.os }})
+  tests:
+    name: Tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -16,43 +16,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - name: Instalar
+      - name: Install
         shell: bash
         run: |
-          echo webrtcvad > excluir.txt
+          echo webrtcvad > exclude.txt
           uv venv --python 3.11 .venv
-          uv pip install --torch-backend cpu --excludes excluir.txt -e . pytest
-      - name: Pruebas
+          uv pip install --torch-backend cpu --excludes exclude.txt -e . pytest
+      - name: Tests
         shell: bash
         run: uv run --no-sync python -m pytest -v
 
-  instalador-windows:
-    name: Instalador de Windows
+  windows-installer:
+    name: Windows installer
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ejecutar instalar.ps1
+      - name: Run install.ps1
         shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File instalar.ps1 -SinPausa
-      - name: Comprobar lo instalado
+        run: powershell -ExecutionPolicy Bypass -File install.ps1 -NoPause
+      - name: Check what was installed
         shell: powershell
         run: |
           $exe = Join-Path $env:USERPROFILE '.local\bin\escriba.exe'
-          if (-not (Test-Path $exe)) { throw "Falta $exe" }
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
           $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Escriba.lnk'
-          if (-not (Test-Path $lnk)) { throw "Falta el acceso directo $lnk" }
-          & $exe datos
-          if ($LASTEXITCODE -ne 0) { throw 'escriba datos falló' }
-          $web = Start-Process $exe -ArgumentList 'web', '--no-abrir' -PassThru
+          if (-not (Test-Path $lnk)) { throw "Missing shortcut $lnk" }
+          & $exe data
+          if ($LASTEXITCODE -ne 0) { throw 'escriba data failed' }
+          $web = Start-Process $exe -ArgumentList 'web', '--no-browser' -PassThru
           $ok = $false
           foreach ($i in 1..60) {
             Start-Sleep -Seconds 2
-            try { if ((Invoke-WebRequest 'http://127.0.0.1:8765/ajustes' -UseBasicParsing).StatusCode -eq 200) { $ok = $true; break } } catch {}
+            try { if ((Invoke-WebRequest 'http://127.0.0.1:8765/settings' -UseBasicParsing).StatusCode -eq 200) { $ok = $true; break } } catch {}
           }
           Stop-Process $web.Id -Force
-          if (-not $ok) { throw 'La web no respondió' }
-      - name: Desinstalar
+          if (-not $ok) { throw "The web didn't answer" }
+      - name: Uninstall
         shell: powershell
         run: |
-          powershell -ExecutionPolicy Bypass -File instalar.ps1 -Desinstalar -SinPausa
-          if (Test-Path (Join-Path $env:USERPROFILE '.local\bin\escriba.exe')) { throw 'Sigue instalado' }
+          powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall -NoPause
+          if (Test-Path (Join-Path $env:USERPROFILE '.local\bin\escriba.exe')) { throw 'Still installed' }

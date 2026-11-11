@@ -1,82 +1,83 @@
-"""Transcripción local: faster-whisper + diarización con pyannote.
+"""Local transcription: faster-whisper + diarization with pyannote.
 
-Gratis y sin que el audio salga del PC, pero lento sin tarjeta NVIDIA (en un
-Ryzen 5 5625U, ~1 h 15 por hora de audio con identificación de hablantes).
-Necesita el extra "local" (faster-whisper, pyannote.audio) y, para separar
-hablantes, HF_TOKEN con las condiciones de pyannote aceptadas.
+Free, and the audio never leaves the PC, but slow without an NVIDIA card (on a
+Ryzen 5 5625U, ~1 h 15 min per hour of audio with speaker identification).
+Needs the "local" extra (faster-whisper, pyannote.audio) and, to separate
+speakers, an HF_TOKEN with pyannote's conditions accepted.
 """
 import warnings
 
 import psutil
 
-from . import config, hablantes
-from .progreso import Progreso
+from . import config, speakers as speakers_mod
+from .i18n import _
+from .progress import Progress, phase
 
 BEAM_SIZE = 5
 
 
-def hilos():
-    # Núcleos físicos: con prioridad baja, usarlos todos no resta fluidez al
-    # resto del PC, y los hilos lógicos extra apenas aceleran whisper.
+def threads():
+    # Physical cores: at low priority, using all of them doesn't make the rest
+    # of the PC sluggish, and the extra logical threads barely speed up whisper.
     return psutil.cpu_count(logical=False) or 4
 
 
-def transcribir(audio, salida, modelo="medium", idioma="auto", prompt="", diarizar=False,
-                proyecto="", hablante_list=()):
-    warnings.filterwarnings("ignore", category=UserWarning)  # ruido de pyannote/webrtcvad en el log
+def transcribe(audio, out, model="medium", language="auto", prompt="", diarize=False, project="", speakers=()):
+    warnings.filterwarnings("ignore", category=UserWarning)  # pyannote/webrtcvad noise in the log
     from faster_whisper import WhisperModel
 
-    progreso = Progreso()
-    print(f"Cargando modelo {modelo}...", flush=True)
-    model = WhisperModel(modelo, device="cpu", compute_type="int8", cpu_threads=hilos(), num_workers=1)
+    progress = Progress()
+    phase("loading_model")
+    print(_("Loading model {model}...", model=model), flush=True)
+    whisper = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=threads(), num_workers=1)
 
     kwargs = dict(beam_size=BEAM_SIZE, vad_filter=True, condition_on_previous_text=False)
-    if idioma and idioma != "auto":
-        kwargs["language"] = idioma
+    if language and language != "auto":
+        kwargs["language"] = language
     if prompt:
         kwargs["initial_prompt"] = prompt
 
-    segments_raw, info = model.transcribe(str(audio), **kwargs)
-    print(f"Idioma detectado: {info.language} ({info.language_probability:.0%}), duración: {info.duration:.0f}s",
-          flush=True)
+    raw_segments, info = whisper.transcribe(str(audio), **kwargs)
+    print(_("Detected language: {language} ({probability:.0%}), duration: {seconds:.0f}s",
+            language=info.language, probability=info.language_probability, seconds=info.duration), flush=True)
 
     segments = []
-    progreso.actualizar("Transcribiendo", 0, info.duration)  # arranca el reloj antes del primer segmento
-    for s in segments_raw:
+    progress.update("transcribe", 0, info.duration)  # start the clock before the first segment
+    for s in raw_segments:
         segments.append((s.start, s.end, s.text.strip()))
-        progreso.actualizar("Transcribiendo", s.end, info.duration)
-    progreso.actualizar("Transcribiendo", info.duration, info.duration)
+        progress.update("transcribe", s.end, info.duration)
+    progress.update("transcribe", info.duration, info.duration)
 
-    speaker_turns, speaker_map = None, None
-    if diarizar:
-        speaker_turns = _diarizar(audio, hablante_list, progreso)
-        progreso.cerrar()  # deja de redibujar las barras antes de imprimir los matches
-        if speaker_turns:
-            speaker_map = hablantes.nombrar_hablantes(str(audio), str(salida), speaker_turns, proyecto,
-                                                      list(hablante_list))
+    turns, names = None, None
+    if diarize:
+        turns = _diarize(audio, speakers, progress)
+        progress.close()  # stop redrawing the bars before printing the matches
+        if turns:
+            names = speakers_mod.name_speakers(str(audio), str(out), turns, project, list(speakers))
 
-    progreso.cerrar()
-    hablantes.escribir_transcripcion(str(salida), segments, speaker_turns, speaker_map)
+    progress.close()
+    speakers_mod.write_transcript(str(out), segments, turns, names)
 
 
-def _diarizar(audio, hablante_list, progreso):
-    hf_token = config.leer_secreto("HF_TOKEN")
+def _diarize(audio, speakers, progress):
+    hf_token = config.read_secret("HF_TOKEN")
     if not hf_token:
-        print("AVISO: falta HF_TOKEN: sin separar hablantes")
+        print(_("WARNING: HF_TOKEN is missing: speakers won't be separated"))
         return None
     try:
         from pyannote.audio import Pipeline
     except ImportError:
-        print("AVISO: pyannote.audio no instalado: sin separar hablantes (instala el extra 'local')")
+        print(_("WARNING: pyannote.audio is not installed: speakers won't be separated (install the 'local' extra)"))
         return None
-    print("Ejecutando diarización (suele tardar más que la transcripción)...", flush=True)
+    phase("diarizing")
+    print(_("Running diarization (usually takes longer than the transcription)..."), flush=True)
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=hf_token)
-    kwargs = {"num_speakers": len(hablante_list)} if hablante_list else {}
-    # Audio ya cargado en memoria: con una ruta, pyannote 4 lo leería con
-    # torchcodec, que en Windows necesita las DLL de FFmpeg instaladas aparte
+    kwargs = {"num_speakers": len(speakers)} if speakers else {}
+    # Audio already loaded in memory: given a path, pyannote 4 would read it
+    # with torchcodec, which on Windows needs the FFmpeg DLLs installed separately
     import soundfile as sf
     import torch
-    datos, sr = sf.read(str(audio), dtype="float32", always_2d=True)
-    entrada = {"waveform": torch.from_numpy(datos.mean(axis=1, keepdims=True).T.copy()), "sample_rate": sr}
-    diarization = pipeline(entrada, hook=progreso.hook_pyannote(), **kwargs)
-    return [(t.start, t.end, s) for t, _, s in diarization.speaker_diarization.itertracks(yield_label=True)]
+    data, sr = sf.read(str(audio), dtype="float32", always_2d=True)
+    waveform = {"waveform": torch.from_numpy(data.mean(axis=1, keepdims=True).T.copy()), "sample_rate": sr}
+    diarization = pipeline(waveform, hook=progress.pyannote_hook(), **kwargs)
+    return [(t.start, t.end, s) for t, _unused, s in diarization.speaker_diarization.itertracks(yield_label=True)]

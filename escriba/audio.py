@@ -1,85 +1,84 @@
-"""Utilidades de audio sin ffmpeg: duración, compresión a Opus y reproducción.
+"""Audio utilities without ffmpeg: duration, Opus compression and playback.
 
-soundfile (libsndfile) lee y escribe WAV, FLAC y Ogg/Opus en Linux, Windows y
-macOS sin instalar nada aparte, y soundcard reproduce por el altavoz del
-sistema. Así el programa no depende de tener ffmpeg instalado.
+soundfile (libsndfile) reads and writes WAV, FLAC and Ogg/Opus on Linux,
+Windows and macOS without installing anything else, and soundcard plays through
+the system speaker. So the program doesn't need ffmpeg.
 """
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
-from .progreso import Progreso
+from .progress import Progress
 
-# compression_level de libsndfile para Opus. No es lineal: medido sobre una
-# reunión real a 16 kHz, 0.84 da ~21 kbps y 0.89 ~16 kbps (el antiguo
-# "ffmpeg -b:a 24k -application voip" daba ~13 kbps reales). Las huellas de voz
-# salen iguales (similitud > 0,999 con el WAV).
-NIVEL_ARCHIVO = 0.89
-NIVEL_SUBIDA = 0.84
-FRECUENCIAS_OPUS = (8000, 12000, 16000, 24000, 48000)
-BLOQUE_S = 10
+# libsndfile compression_level for Opus. Not linear: measured on a real
+# meeting at 16 kHz, 0.84 gives ~21 kbps and 0.89 ~16 kbps. Voiceprints come
+# out the same (similarity > 0.999 against the WAV).
+ARCHIVE_LEVEL = 0.89
+UPLOAD_LEVEL = 0.84
+OPUS_RATES = (8000, 12000, 16000, 24000, 48000)
+BLOCK_S = 10
 
 
-def duracion(ruta):
+def duration(path):
     try:
-        return sf.info(str(ruta)).duration
+        return sf.info(str(path)).duration
     except Exception:
         return None
 
 
-def _a_mono(bloque):
-    return bloque.mean(axis=1) if bloque.ndim > 1 else bloque
+def _to_mono(block):
+    return block.mean(axis=1) if block.ndim > 1 else block
 
 
-def _remuestrear(bloque, sr_origen, sr_destino):
-    """Interpolación lineal: suficiente para voz y sin depender de scipy."""
-    n = int(round(len(bloque) * sr_destino / sr_origen))
+def _resample(block, sr_from, sr_to):
+    """Linear interpolation: good enough for voice, and no scipy needed."""
+    n = int(round(len(block) * sr_to / sr_from))
     if n == 0:
-        return bloque[:0]
-    x = np.linspace(0, len(bloque) - 1, n)
-    return np.interp(x, np.arange(len(bloque)), bloque).astype("float32")
+        return block[:0]
+    x = np.linspace(0, len(block) - 1, n)
+    return np.interp(x, np.arange(len(block)), block).astype("float32")
 
 
-def comprimir_opus(origen, destino, nivel=NIVEL_ARCHIVO, descripcion="Comprimiendo audio"):
-    """Cualquier audio que lea soundfile -> Ogg/Opus mono, con barra de progreso."""
-    with sf.SoundFile(str(origen)) as entrada:
-        sr = entrada.samplerate
-        sr_salida = sr if sr in FRECUENCIAS_OPUS else 16000
-        total = entrada.frames / sr
-        progreso = Progreso()
+def compress_opus(source, target, level=ARCHIVE_LEVEL):
+    """Any audio soundfile can read -> mono Ogg/Opus, with a progress bar."""
+    with sf.SoundFile(str(source)) as reader:
+        sr = reader.samplerate
+        sr_out = sr if sr in OPUS_RATES else 16000
+        total = reader.frames / sr
+        progress = Progress()
         try:
-            with sf.SoundFile(str(destino), "w", samplerate=sr_salida, channels=1, format="OGG",
-                              subtype="OPUS", compression_level=nivel) as salida:
-                hecho = 0.0
-                for bloque in entrada.blocks(blocksize=sr * BLOQUE_S, dtype="float32", always_2d=True):
-                    bloque = _a_mono(bloque)
-                    if sr_salida != sr:
-                        bloque = _remuestrear(bloque, sr, sr_salida)
-                    salida.write(bloque)
-                    hecho += BLOQUE_S
-                    progreso.actualizar(descripcion, min(hecho, total), total)
-            progreso.actualizar(descripcion, total, total)
+            with sf.SoundFile(str(target), "w", samplerate=sr_out, channels=1, format="OGG",
+                              subtype="OPUS", compression_level=level) as writer:
+                done = 0.0
+                for block in reader.blocks(blocksize=sr * BLOCK_S, dtype="float32", always_2d=True):
+                    block = _to_mono(block)
+                    if sr_out != sr:
+                        block = _resample(block, sr, sr_out)
+                    writer.write(block)
+                    done += BLOCK_S
+                    progress.update("compress", min(done, total), total)
+            progress.update("compress", total, total)
         finally:
-            progreso.cerrar()
+            progress.close()
 
 
-def leer_fragmento(ruta, inicio, fin):
-    """(muestras mono float32, frecuencia) entre inicio y fin, en segundos."""
-    with sf.SoundFile(str(ruta)) as f:
+def read_clip(path, start, end):
+    """(mono float32 samples, sample rate) between start and end, in seconds."""
+    with sf.SoundFile(str(path)) as f:
         sr = f.samplerate
-        f.seek(int(inicio * sr))
-        datos = f.read(int((fin - inicio) * sr), dtype="float32", always_2d=True)
-    return _a_mono(datos), sr
+        f.seek(int(start * sr))
+        data = f.read(int((end - start) * sr), dtype="float32", always_2d=True)
+    return _to_mono(data), sr
 
 
-def reproducir(ruta, inicio, fin):
-    """Reproduce un fragmento por el altavoz por defecto. Bloquea hasta acabar;
-    Ctrl+C lo corta (se reproduce en trozos para que el corte sea inmediato)."""
+def play(path, start, end):
+    """Plays a clip through the default speaker. Blocks until it ends; Ctrl+C
+    stops it (it plays in chunks so the stop is immediate)."""
     import soundcard as sc
 
-    datos, sr = leer_fragmento(Path(ruta), inicio, fin)
-    trozo = sr // 4
+    data, sr = read_clip(Path(path), start, end)
+    chunk = sr // 4
     with sc.default_speaker().player(samplerate=sr, channels=1) as player:
-        for i in range(0, len(datos), trozo):
-            player.play(datos[i:i + trozo])
+        for i in range(0, len(data), chunk):
+            player.play(data[i:i + chunk])

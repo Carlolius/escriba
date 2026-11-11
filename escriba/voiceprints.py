@@ -1,16 +1,14 @@
-"""Identificación de hablantes por voiceprint (librería de voces por proyecto).
+"""Speaker identification by voiceprint (one voice library per project).
 
-Cada persona puede tener varias muestras (embeddings de resemblyzer) enroladas en
-distintas condiciones de grabación. La identificación usa la similitud máxima
-entre el embedding del cluster y todas las muestras guardadas de cada persona.
+Each person may have several samples (resemblyzer embeddings) taken in
+different recording conditions. Identification uses the highest similarity
+between the cluster's embedding and every saved sample of each person.
 
-Cada muestra se guarda como:
-  {"id": "abc123...", "embedding": [...], "origen": {"audio", "inicio", "fin"} | None}
+voiceprints/<project>.json: {name: [sample, ...]}, each sample being
+  {"id": "abc123...", "embedding": [...], "origin": {"audio", "start", "end"} | None}
 
-"id" es estable (no cambia si se borran o mueven otras muestras) y es lo que usan
-eliminar_muestra/reclasificar_muestra para referirse a una muestra concreta.
-Las muestras guardadas antes de este esquema (lista plana de floats, sin id ni
-origen) se migran solas la primera vez que se leen.
+"id" is stable (it doesn't change when other samples are deleted or moved) and
+is what delete_sample/move_sample use to point at a sample.
 """
 import json
 import os
@@ -21,275 +19,243 @@ import numpy as np
 
 from . import config
 
-UMBRAL_DEFECTO = 0.87
-UMBRAL_DUPLICADO = 0.93
+DEFAULT_THRESHOLD = 0.87
+DUPLICATE_THRESHOLD = 0.93
 
 
-def ruta_libreria(proyecto):
-    return str(config.dir_voiceprints() / f"{proyecto}.json")
+def library_path(project):
+    return str(config.voiceprints_dir() / f"{project}.json")
 
 
-def _respaldar(ruta):
-    """Copia de seguridad de un solo paso antes de una operación destructiva
-    (borrar, reclasificar). Se sobreescribe cada vez — guarda el estado justo
-    antes del último cambio, no un historial completo."""
-    if os.path.exists(ruta):
-        shutil.copy2(ruta, ruta + ".bak")
+def _backup(path):
+    """One-step backup before a destructive operation (delete, move). It's
+    overwritten every time: it keeps the state just before the last change,
+    not a full history."""
+    if os.path.exists(path):
+        shutil.copy2(path, path + ".bak")
 
 
-def restaurar_backup(proyecto):
-    """Deshace el último borrado/reclasificación restaurando la copia .bak de la librería."""
-    ruta = ruta_libreria(proyecto)
-    backup = ruta + ".bak"
-    if not os.path.exists(backup):
+def has_backup(project):
+    return os.path.exists(library_path(project) + ".bak")
+
+
+def restore_backup(project):
+    """Undoes the last delete/move by restoring the library's .bak copy."""
+    path = library_path(project)
+    if not os.path.exists(path + ".bak"):
         return False
-    shutil.copy2(backup, ruta)
+    shutil.copy2(path + ".bak", path)
     return True
 
 
-def _normalizar_muestra(m):
-    """Acepta el formato antiguo (lista de floats) o el nuevo (dict); devuelve
-    siempre un dict con "id", "embedding" y "origen", generando lo que falte."""
-    if isinstance(m, dict):
-        cambiado = False
-        if "id" not in m:
-            m = {**m, "id": uuid.uuid4().hex[:10]}
-            cambiado = True
-        if "origen" not in m:
-            m["origen"] = None
-            cambiado = True
-        return m, cambiado
-    return {"id": uuid.uuid4().hex[:10], "embedding": m, "origen": None}, True
+def _load(path):
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
-def _leer_y_migrar(ruta):
-    """Devuelve (datos_normalizados, hubo_cambios)."""
-    if not os.path.exists(ruta):
-        return {}, False
-    with open(ruta, encoding="utf-8") as f:
-        crudo = json.load(f)
-    datos = {}
-    cambiado = False
-    for nombre, muestras in crudo.items():
-        normalizadas = []
-        for m in muestras:
-            nm, c = _normalizar_muestra(m)
-            normalizadas.append(nm)
-            cambiado = cambiado or c
-        datos[nombre] = normalizadas
-    return datos, cambiado
+def _save(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
 
 
-def _guardar(ruta, datos):
-    os.makedirs(os.path.dirname(ruta), exist_ok=True)
-    with open(ruta, "w", encoding="utf-8") as f:
-        json.dump(datos, f)
-
-
-def _cargar_y_migrar_si_hace_falta(ruta):
-    datos, cambiado = _leer_y_migrar(ruta)
-    if cambiado:
-        _guardar(ruta, datos)
-    return datos
-
-
-def cargar_libreria(proyecto):
-    """Para cálculo de similitud: nombre -> lista de embeddings (np.array)."""
-    datos = _cargar_y_migrar_si_hace_falta(ruta_libreria(proyecto))
+def load_library(project):
+    """For similarity: name -> list of embeddings (np.array)."""
     return {
-        nombre: [np.array(m["embedding"], dtype="float32") for m in muestras]
-        for nombre, muestras in datos.items()
+        name: [np.array(s["embedding"], dtype="float32") for s in samples]
+        for name, samples in _load(library_path(project)).items()
     }
 
 
-def cargar_libreria_con_origen(proyecto):
-    """Para gestión/reproducción: nombre -> lista de {"id", "embedding", "origen"}."""
-    return _cargar_y_migrar_si_hace_falta(ruta_libreria(proyecto))
+def load_samples(project):
+    """For managing/playing: name -> list of {"id", "embedding", "origin"}."""
+    return _load(library_path(project))
 
 
 def cos_sim(a, b):
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
-def identificar(embedding, libreria, umbral=UMBRAL_DEFECTO):
-    """Devuelve (nombre, similitud) del mejor match, o (None, similitud) si no supera el umbral."""
-    mejor_nombre, mejor_sim = None, 0.0
-    for nombre, muestras in libreria.items():
-        sim = max(cos_sim(embedding, m) for m in muestras)
-        if sim > mejor_sim:
-            mejor_sim, mejor_nombre = sim, nombre
-    if mejor_sim >= umbral:
-        return mejor_nombre, mejor_sim
-    return None, mejor_sim
+def identify(embedding, library, threshold=DEFAULT_THRESHOLD):
+    """(name, similarity) of the best match, or (None, similarity) below the threshold."""
+    best_name, best_sim = None, 0.0
+    for name, samples in library.items():
+        sim = max(cos_sim(embedding, s) for s in samples)
+        if sim > best_sim:
+            best_sim, best_name = sim, name
+    if best_sim >= threshold:
+        return best_name, best_sim
+    return None, best_sim
 
 
-def anadir_muestra(proyecto, nombre, embedding, origen=None):
-    """origen, si se conoce: {"audio": ruta, "inicio": segundos, "fin": segundos}.
+def add_sample(project, name, embedding, origin=None):
+    """origin, if known: {"audio": path, "start": seconds, "end": seconds}.
 
-    Si la nueva muestra es casi idéntica a una que ya se tiene guardada
-    (similitud >= UMBRAL_DUPLICADO — mismas condiciones repetidas: mismo canal,
-    mismo idioma, mismo día...), no se añade una entrada nueva. Así la librería
-    no crece sin límite solo por confirmar la misma condición una y otra vez;
-    solo crece con muestras que de verdad aportan una condición distinta.
+    If the new sample is almost identical to one already saved (similarity >=
+    DUPLICATE_THRESHOLD: same conditions again, same channel, same day...),
+    no new entry is added. So the library doesn't grow forever just by
+    confirming the same condition over and over; it only grows with samples
+    that really bring a different condition.
 
-    Devuelve (n_muestras, se_anadio) — n_muestras es el total actual para esa
-    persona; se_anadio indica si esta llamada añadió una muestra nueva o no."""
-    ruta = ruta_libreria(proyecto)
-    datos = _cargar_y_migrar_si_hace_falta(ruta)
-    existentes = datos.get(nombre, [])
+    Returns (n_samples, added): the current total for that person, and
+    whether this call added a new sample."""
+    path = library_path(project)
+    data = _load(path)
+    existing = data.get(name, [])
 
-    if existentes:
-        mejor = max(cos_sim(embedding, np.array(m["embedding"], dtype="float32")) for m in existentes)
-        if mejor >= UMBRAL_DUPLICADO:
-            return len(existentes), False
+    if existing:
+        best = max(cos_sim(embedding, np.array(s["embedding"], dtype="float32")) for s in existing)
+        if best >= DUPLICATE_THRESHOLD:
+            return len(existing), False
 
-    nueva = {"id": uuid.uuid4().hex[:10], "embedding": embedding.tolist(), "origen": origen}
-    datos.setdefault(nombre, []).append(nueva)
-    _guardar(ruta, datos)
-    return len(datos[nombre]), True
+    sample = {"id": uuid.uuid4().hex[:10], "embedding": embedding.tolist(), "origin": origin}
+    data.setdefault(name, []).append(sample)
+    _save(path, data)
+    return len(data[name]), True
 
 
-def eliminar_persona(proyecto, nombre):
-    ruta = ruta_libreria(proyecto)
-    datos = _cargar_y_migrar_si_hace_falta(ruta)
-    if nombre not in datos:
+def delete_person(project, name):
+    path = library_path(project)
+    data = _load(path)
+    if name not in data:
         return False
-    _respaldar(ruta)
-    del datos[nombre]
-    _guardar(ruta, datos)
+    _backup(path)
+    del data[name]
+    _save(path, data)
     return True
 
 
-def _buscar_indice(muestras, id_muestra):
-    return next((i for i, m in enumerate(muestras) if m["id"] == id_muestra), None)
+def _index(samples, sample_id):
+    return next((i for i, s in enumerate(samples) if s["id"] == sample_id), None)
 
 
-def eliminar_muestra(proyecto, nombre, id_muestra):
-    ruta = ruta_libreria(proyecto)
-    datos = _cargar_y_migrar_si_hace_falta(ruta)
-    muestras = datos.get(nombre, [])
-    idx = _buscar_indice(muestras, id_muestra)
-    if idx is None:
+def find_sample(project, name, sample_id):
+    return next((s for s in load_samples(project).get(name, []) if s["id"] == sample_id), None)
+
+
+def delete_sample(project, name, sample_id):
+    path = library_path(project)
+    data = _load(path)
+    samples = data.get(name, [])
+    i = _index(samples, sample_id)
+    if i is None:
         return False
-    _respaldar(ruta)
-    muestras.pop(idx)
-    if not muestras:
-        del datos[nombre]
-    _guardar(ruta, datos)
+    _backup(path)
+    samples.pop(i)
+    if not samples:
+        del data[name]
+    _save(path, data)
     return True
 
 
-def reclasificar_muestra(proyecto, nombre_actual, id_muestra, nombre_nuevo):
-    """Mueve una muestra de una persona a otra (o a un nombre nuevo), conservando
-    su embedding y origen."""
-    ruta = ruta_libreria(proyecto)
-    datos = _cargar_y_migrar_si_hace_falta(ruta)
-    muestras = datos.get(nombre_actual, [])
-    idx = _buscar_indice(muestras, id_muestra)
-    if idx is None:
+def move_sample(project, current_name, sample_id, new_name):
+    """Moves a sample from one person to another (or to a new name), keeping
+    its embedding and origin."""
+    path = library_path(project)
+    data = _load(path)
+    samples = data.get(current_name, [])
+    i = _index(samples, sample_id)
+    if i is None:
         return False
-    _respaldar(ruta)
-    muestra = muestras.pop(idx)
-    if not muestras:
-        del datos[nombre_actual]
-    datos.setdefault(nombre_nuevo, []).append(muestra)
-    _guardar(ruta, datos)
+    _backup(path)
+    sample = samples.pop(i)
+    if not samples:
+        del data[current_name]
+    data.setdefault(new_name, []).append(sample)
+    _save(path, data)
     return True
 
 
-def ruta_confirmados(proyecto):
-    return str(config.dir_voiceprints() / f"{proyecto}.audit_confirmados.json")
+# ── Audit ────────────────────────────────────────────────────────────────────
+
+def _audit_ok_path(project):
+    return str(config.voiceprints_dir() / f"{project}.audit_ok.json")
 
 
-def cargar_confirmados(proyecto):
-    """Hallazgos de auditoría que el usuario ya marcó como correctos — no volver
-    a mostrarlos aunque la similitud siga igual. Persiste en disco entre sesiones."""
-    ruta = ruta_confirmados(proyecto)
-    if not os.path.exists(ruta):
+def load_audit_ok(project):
+    """Audit findings the user already marked as fine: don't show them again
+    even if the similarity stays the same. Kept on disk between sessions."""
+    path = _audit_ok_path(project)
+    if not os.path.exists(path):
         return set()
-    with open(ruta, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return {tuple(x) for x in json.load(f)}
 
 
-def _clave_hallazgo(tipo, id_a, id_b):
-    return (tipo,) + tuple(sorted((id_a, id_b)))
+def finding_key(kind, id_a, id_b):
+    return (kind,) + tuple(sorted((id_a, id_b)))
 
 
-def marcar_como_correcto(proyecto, tipo, id_a, id_b):
-    ruta = ruta_confirmados(proyecto)
-    confirmados = cargar_confirmados(proyecto)
-    confirmados.add(_clave_hallazgo(tipo, id_a, id_b))
-    os.makedirs(os.path.dirname(ruta), exist_ok=True)
-    with open(ruta, "w", encoding="utf-8") as f:
-        json.dump([list(c) for c in confirmados], f)
+def mark_as_ok(project, kind, id_a, id_b):
+    path = _audit_ok_path(project)
+    ok = load_audit_ok(project)
+    ok.add(finding_key(kind, id_a, id_b))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump([list(k) for k in ok], f)
 
 
-def auditar_libreria(proyecto, umbral_confusion=0.80, incluir_confirmados=False):
-    """Detecta tres tipos de problema en la librería, señalando siempre el par de
-    muestras (por id) más representativo de cada hallazgo:
-    - 'dispersion': dos muestras de la misma persona poco parecidas entre sí
-      (posible mezcla de dos condiciones de grabación distintas, o de dos personas).
-    - 'duplicado': dos muestras de la misma persona casi idénticas entre sí
-      (misma condición repetida — no aportan nada nuevo, se puede borrar una).
-    - 'confusion': dos muestras de personas distintas muy parecidas entre sí
-      (riesgo real de identificar mal, sobre todo si superan UMBRAL_DEFECTO).
+def audit_library(project, confusion_threshold=0.80, include_ok=False):
+    """Finds three kinds of problem in the library, always pointing at the most
+    telling pair of samples (by id) of each finding:
+    - "spread": two samples of the same person that don't look alike
+      (maybe two different recording conditions mixed up, or two people).
+    - "duplicate": two almost identical samples of the same person
+      (same condition twice: nothing new, one can be deleted).
+    - "confusion": samples of two different people that look very alike
+      (real risk of misidentifying, especially above DEFAULT_THRESHOLD).
 
-    Por defecto no incluye los que el usuario ya marcó como correctos (ver
-    marcar_como_correcto) — pásalos con incluir_confirmados=True si hace falta.
+    Leaves out the ones the user marked as fine (see mark_as_ok) unless
+    include_ok=True.
+
+    Each finding: {"kind", "similarity", "name_a", "id_a", "name_b", "id_b"}.
     """
-    datos = cargar_libreria_con_origen(proyecto)
-    confirmados = set() if incluir_confirmados else cargar_confirmados(proyecto)
-    problemas = []
+    data = load_samples(project)
+    ok = set() if include_ok else load_audit_ok(project)
+    findings = []
 
-    def emb(m):
-        return np.array(m["embedding"], dtype="float32")
+    def emb(s):
+        return np.array(s["embedding"], dtype="float32")
 
-    for nombre, muestras in datos.items():
-        if len(muestras) < 2:
+    def finding(kind, sim, name_a, id_a, name_b, id_b):
+        findings.append({"kind": kind, "similarity": sim, "name_a": name_a, "id_a": id_a,
+                         "name_b": name_b, "id_b": id_b})
+
+    for name, samples in data.items():
+        if len(samples) < 2:
             continue
-        peor = mejor = None
-        for i, a in enumerate(muestras):
-            for b in muestras[i + 1:]:
+        worst = best = None
+        for i, a in enumerate(samples):
+            for b in samples[i + 1:]:
                 sim = cos_sim(emb(a), emb(b))
-                if peor is None or sim < peor[0]:
-                    peor = (sim, a["id"], b["id"])
-                if mejor is None or sim > mejor[0]:
-                    mejor = (sim, a["id"], b["id"])
+                if worst is None or sim < worst[0]:
+                    worst = (sim, a["id"], b["id"])
+                if best is None or sim > best[0]:
+                    best = (sim, a["id"], b["id"])
+        if worst[0] < DEFAULT_THRESHOLD:
+            finding("spread", worst[0], name, worst[1], name, worst[2])
+        if best[0] >= DUPLICATE_THRESHOLD:
+            finding("duplicate", best[0], name, best[1], name, best[2])
 
-        sim, id_a, id_b = peor
-        if sim < UMBRAL_DEFECTO:
-            problemas.append({
-                "tipo": "dispersion", "similitud": sim,
-                "nombre_a": nombre, "id_a": id_a,
-                "nombre_b": nombre, "id_b": id_b,
-            })
-
-        sim, id_a, id_b = mejor
-        if sim >= UMBRAL_DUPLICADO:
-            problemas.append({
-                "tipo": "duplicado", "similitud": sim,
-                "nombre_a": nombre, "id_a": id_a,
-                "nombre_b": nombre, "id_b": id_b,
-            })
-
-    nombres = list(datos.keys())
-    for i, n1 in enumerate(nombres):
-        for n2 in nombres[i + 1:]:
-            mejor = None
-            for a in datos[n1]:
-                for b in datos[n2]:
+    names = list(data)
+    for i, n1 in enumerate(names):
+        for n2 in names[i + 1:]:
+            best = None
+            for a in data[n1]:
+                for b in data[n2]:
                     sim = cos_sim(emb(a), emb(b))
-                    if mejor is None or sim > mejor[0]:
-                        mejor = (sim, a["id"], b["id"])
-            if mejor and mejor[0] >= umbral_confusion:
-                sim, id_a, id_b = mejor
-                problemas.append({
-                    "tipo": "confusion", "similitud": sim,
-                    "nombre_a": n1, "id_a": id_a,
-                    "nombre_b": n2, "id_b": id_b,
-                })
+                    if best is None or sim > best[0]:
+                        best = (sim, a["id"], b["id"])
+            if best and best[0] >= confusion_threshold:
+                finding("confusion", best[0], n1, best[1], n2, best[2])
 
-    if confirmados:
-        problemas = [p for p in problemas if _clave_hallazgo(p["tipo"], p["id_a"], p["id_b"]) not in confirmados]
+    if ok:
+        findings = [f for f in findings if finding_key(f["kind"], f["id_a"], f["id_b"]) not in ok]
+    return findings
 
-    return problemas
+
+def most_urgent_first(findings):
+    """Confusions and duplicates by highest similarity, spreads by lowest."""
+    return sorted(findings, key=lambda f: -f["similarity"] if f["kind"] != "spread" else f["similarity"])

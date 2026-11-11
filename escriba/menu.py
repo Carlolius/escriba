@@ -1,8 +1,9 @@
-"""Menú interactivo de terminal para grabar, transcribir e identificar hablantes.
+"""Interactive terminal menu to record, transcribe and identify speakers.
 
-Toda la lógica está en el resto del paquete; aquí solo se pregunta y se
-enseña. La interfaz web usa las mismas funciones.
+All the logic is in the rest of the package; this only asks and shows. The
+web interface uses the same functions.
 """
+import math
 import os
 import time
 from pathlib import Path
@@ -14,612 +15,660 @@ from rich.markup import escape
 from rich.table import Table
 
 from . import audio as audio_util
-from . import config, grabar, revisar, tareas, voiceprints
-from .transcribir import local_disponible
+from . import config, i18n, jobs, record, review, voiceprints
+from .i18n import _, _n
+from .transcribe import local_available, missing_key
 
 console = Console()
+NEW_PROJECT = "\0new"
+OTHER_PATH = "\0other"
+BACK = "\0back"
 
-NUEVO_PROYECTO = "+ nuevo proyecto..."
-OTRA_RUTA = "Escribir otra ruta..."
+
+def _choice(title, value):
+    return questionary.Choice(title, value=value)
 
 
-# ── Elecciones comunes ───────────────────────────────────────────────────────
+def _select(message, choices, **kwargs):
+    return questionary.select(message, choices=choices, instruction=_("(Use arrow keys)"), **kwargs)
 
-def elegir_proyecto():
-    proyectos = config.listar_proyectos()
-    ultimo = config.cargar_estado().get("ultimo_proyecto")
-    default = ultimo if ultimo in proyectos else None
-    eleccion = questionary.select("Proyecto:", choices=proyectos + [NUEVO_PROYECTO], default=default).ask()
-    if eleccion is None:
+
+# ── Common choices ───────────────────────────────────────────────────────────
+
+def choose_project():
+    projects = config.list_projects()
+    last = config.load_state().get("last_project")
+    choice = _select(_("Project:"), choices=projects + [_choice(_("+ new project..."), NEW_PROJECT)],
+                                default=last if last in projects else None).ask()
+    if choice is None:
         return None
-    if eleccion == NUEVO_PROYECTO:
-        eleccion = questionary.text("Nombre del proyecto nuevo (ej. cliente_x):").ask()
-        if not eleccion:
+    if choice == NEW_PROJECT:
+        choice = questionary.text(_("Name of the new project (e.g. client_x):")).ask()
+        if not choice:
             return None
-        config.crear_proyecto(eleccion)
-    config.actualizar_estado(ultimo_proyecto=eleccion)
-    return eleccion
+        config.create_project(choice)
+    config.update_state(last_project=choice)
+    return choice
 
 
-def _dir_proyecto(proyecto):
-    return config.cargar_estado().get(f"ultimo_dir_{proyecto}", str(Path.home()))
+def _project_dir(project):
+    return config.project_dir(project) or str(Path.home())
 
 
-def elegir_audio(proyecto):
-    default_dir = Path(_dir_proyecto(proyecto))
-    pendientes = tareas.audios_pendientes(default_dir, limite=10)
-    if pendientes:
-        opciones = []
-        for w, dur in pendientes:
-            titulo = str(w.relative_to(default_dir))
+def choose_audio(project):
+    folder = Path(_project_dir(project))
+    todo = jobs.untranscribed(folder, limit=10)
+    if todo:
+        options = []
+        for wav, dur in todo:
+            title = str(wav.relative_to(folder))
             if dur:
-                titulo += (f" · {tareas.formato_min(dur)} · ~{tareas.formato_min(dur * tareas.FACTOR_PROCESO)}"
-                           " en local, minutos en la nube")
-            opciones.append(questionary.Choice(titulo, value=str(w)))
-        opciones.append(OTRA_RUTA)
-        eleccion = questionary.select("Archivo de audio (sin transcribir todavía):", choices=opciones).ask()
-        if eleccion is None:
+                title += " · " + _("{duration} · ~{local} locally, minutes in the cloud",
+                                   duration=jobs.format_minutes(dur),
+                                   local=jobs.format_minutes(dur * jobs.PROCESS_FACTOR))
+            options.append(_choice(title, str(wav)))
+        options.append(_choice(_("Type another path..."), OTHER_PATH))
+        choice = _select(_("Audio file (not transcribed yet):"), choices=options).ask()
+        if choice is None:
             return None
-        if eleccion != OTRA_RUTA:
-            # No se toca ultimo_dir: si el audio estaba en una subcarpeta, recordarla
-            # haría que la próxima búsqueda dejara fuera el resto del proyecto.
-            return Path(eleccion)
+        if choice != OTHER_PATH:
+            # The project folder isn't changed: if the audio was in a subfolder,
+            # remembering it would leave the rest of the project out of the next search.
+            return Path(choice)
 
-    ruta = questionary.path("Archivo de audio:", default=str(default_dir) + os.sep).ask()
-    if not ruta:
+    path = questionary.path(_("Audio file:"), default=str(folder) + os.sep).ask()
+    if not path:
         return None
-    ruta = Path(ruta).expanduser()
-    config.actualizar_estado(**{f"ultimo_dir_{proyecto}": str(ruta.parent)})
-    return ruta
+    path = Path(path).expanduser()
+    config.set_project_dir(project, path.parent)
+    return path
 
 
-def elegir_motor_idioma():
-    """Devuelve (motor, modelo, idioma) o None."""
-    motor = questionary.select(
-        "¿Dónde transcribir?",
+def choose_engine_language():
+    """Returns (engine, model, language) or None."""
+    engine = _select(
+        _("Where to transcribe?"),
         choices=[
-            questionary.Choice("En la nube (AssemblyAI): unos minutos, ~0,23 $ por hora de audio", value="nube"),
-            questionary.Choice("Local: gratis y el audio no sale del PC, pero ~1 h 15 por hora de audio", value="local"),
+            _choice(_("In the cloud (AssemblyAI): a few minutes, ~$0.23 per hour of audio"), "cloud"),
+            _choice(_("Locally: free and the audio never leaves the PC, but ~1 h 15 min per hour of audio"),
+                    "local"),
         ],
-        default="nube",
+        default="cloud",
     ).ask()
-    if motor is None:
+    if engine is None:
         return None
-    if motor == "local" and not local_disponible():
-        console.print("[red]El modo local no está instalado[/red] (falta el extra 'local': faster-whisper y pyannote).")
+    if engine == "local" and not local_available():
+        console.print(_("[red]Local mode is not installed[/red] (the 'local' extra is missing: faster-whisper "
+                        "and pyannote)."))
         return None
-    idioma = questionary.select(
-        "Idioma:",
+    language = _select(
+        _("Language spoken:"),
         choices=[
-            questionary.Choice("auto (detectar solo; una reunión con gallego suele salir en castellano)", value="auto"),
+            _choice(_("auto (detect it; a meeting with Galician usually comes out in Spanish)"), "auto"),
             "es",
-            questionary.Choice("gl (respeta la mezcla gallego/castellano; en la nube puede juntar hablantes)", value="gl"),
+            _choice(_("gl (keeps the Galician/Spanish mix; in the cloud it may merge speakers)"), "gl"),
             "en",
-            "otro...",
+            _choice(_("other..."), "other"),
         ],
         default="auto",
     ).ask()
-    if idioma == "otro...":
-        idioma = questionary.text("Código de idioma (ej. fr, de):").ask()
-    if not idioma:
+    if language == "other":
+        language = questionary.text(_("Language code (e.g. fr, de):")).ask()
+    if not language:
         return None
-    modelo = "medium"
-    if motor == "local":
-        modelo = questionary.select(
-            "Modelo:",
+    model = "medium"
+    if engine == "local":
+        model = _select(
+            _("Model:"),
             choices=[
                 "medium",
-                questionary.Choice("turbo (~25% más rápido, pero a veces se salta frases; se descarga la 1ª vez)",
-                                   value="turbo"),
-                questionary.Choice("large (se descarga la 1ª vez, ~3 GB)", value="large"),
+                _choice(_("turbo (~25% faster, but sometimes skips sentences; downloaded the first time)"), "turbo"),
+                _choice(_("large (downloaded the first time, ~3 GB)"), "large"),
                 "small", "base", "tiny",
             ],
             default="medium",
         ).ask()
-        if modelo is None:
+        if model is None:
             return None
-    return motor, modelo, idioma
+    return engine, model, language
 
 
-def _falta_clave(motor):
-    from .transcribir import clave_que_falta
-    if not (clave := clave_que_falta(motor)):
+def _key_is_missing(engine):
+    if not (key := missing_key(engine)):
         return False
-    console.print(f"[red]Falta {clave}.[/red] Ponla en {config.dir_datos() / 'secretos.env'} "
-                  f"(una línea {clave}=...) y vuelve a intentarlo.")
+    console.print(_("[red]{key} is missing.[/red] Put it in {path} (a line {key}=...) and try again.",
+                    key=key, path=config.secrets_path()))
     return True
 
 
-# ── Grabar y transcribir ─────────────────────────────────────────────────────
+# ── Record and transcribe ────────────────────────────────────────────────────
 
-def _barra(nivel):
-    # RMS de voz suele andar por 0,01-0,1: escala logarítmica para que se vea
-    import math
-    llenas = 0 if nivel <= 0 else max(0, min(20, int((math.log10(nivel) + 4) * 5)))
-    return "█" * llenas + "·" * (20 - llenas)
+def _bar(level):
+    # Voice RMS is usually around 0.01-0.1: log scale so it shows
+    full = 0 if level <= 0 else max(0, min(20, int((math.log10(level) + 4) * 5)))
+    return "█" * full + "·" * (20 - full)
 
 
-def accion_grabar():
-    proyecto = elegir_proyecto()
-    if not proyecto:
+def do_record():
+    project = choose_project()
+    if not project:
         return
-    directorio = questionary.path(
-        "¿Dónde guardar la grabación?", default=_dir_proyecto(proyecto) + "/", only_directories=True
-    ).ask()
-    if not directorio:
+    folder = questionary.path(_("Where to save the recording?"), default=_project_dir(project) + os.sep,
+                              only_directories=True).ask()
+    if not folder:
         return
-    directorio = Path(directorio).expanduser()
-    directorio.mkdir(parents=True, exist_ok=True)
-    config.actualizar_estado(**{f"ultimo_dir_{proyecto}": str(directorio)})
+    folder = Path(folder).expanduser()
+    folder.mkdir(parents=True, exist_ok=True)
+    config.set_project_dir(project, folder)
 
-    descripcion = questionary.text("Descripción de la reunión (ej. seguimiento_semanal):").ask()
-    if descripcion is None:
+    description = questionary.text(_("Meeting description (e.g. weekly_followup):")).ask()
+    if description is None:
         return
-    audio = directorio / f"{grabar.nombre_por_defecto(descripcion or 'reunion')}.wav"
+    audio = folder / f"{record.default_name(description)}.wav"
 
     try:
-        g, aviso = grabar.desde_preferencias(audio)
+        r, warning = record.from_preferences(audio)
     except Exception as e:
-        console.print(f"[red]No se puede grabar: {e}[/red]")
+        console.print("[red]" + escape(_("Can't record: {error}", error=e)) + "[/red]")
         return
-    if aviso:
-        console.print(f"[yellow]{escape(aviso)}[/yellow]")
-    console.print("[dim]Avisa a los demás de que grabas la reunión.[/dim]")
-    console.print(f"[bold]Grabando[/bold] {audio.name}\n  Lo que suena: {g.loop.name}\n  Micrófono:    {g.mic.name}")
-    g.empezar()
+    if warning:
+        console.print(f"[yellow]{escape(warning)}[/yellow]")
+    console.print("[dim]" + _("Tell the others you are recording the meeting.") + "[/dim]")
+    console.print(_("[bold]Recording[/bold] {name}\n  What plays: {output}\n  Microphone: {mic}",
+                    name=audio.name, output=r.loop.name, mic=r.mic.name))
+    r.start()
     try:
         with Live(console=console, refresh_per_second=4, transient=True) as live:
             while True:
-                s = int(g.segundos)
-                texto = (f"[bold red]●[/bold red] {s // 60}:{s % 60:02d}   "
-                         f"sistema {_barra(g.niveles['sistema'])}   micro {_barra(g.niveles['micro'])}"
-                         "   [dim]Ctrl+C para parar[/dim]")
-                for aviso in g.avisos + g.errores:
-                    texto += f"\n[yellow]{escape(aviso)}[/yellow]"
-                live.update(texto)
+                s = int(r.seconds)
+                text = (f"[bold red]●[/bold red] {s // 60}:{s % 60:02d}   "
+                        + _("system {system}   mic {mic}", system=_bar(r.levels["system"]), mic=_bar(r.levels["mic"]))
+                        + "   [dim]" + _("Ctrl+C to stop") + "[/dim]")
+                for w in r.warnings + r.errors:
+                    text += f"\n[yellow]{escape(w)}[/yellow]"
+                live.update(text)
                 time.sleep(0.25)
     except KeyboardInterrupt:
         pass
-    g.parar()
-    console.print(f"[green]Grabado:[/green] {audio} ({tareas.formato_min(g.segundos)})")
+    r.stop()
+    console.print(_("[green]Recorded:[/green] {path} ({duration})", path=audio,
+                    duration=jobs.format_minutes(r.seconds)))
 
-    if not questionary.confirm("¿Transcribir e identificar ahora?", default=False).ask():
-        console.print("[dim]Puedes transcribirlo luego con \"Transcribir + identificar\".[/dim]")
+    if not questionary.confirm(_("Transcribe and identify now?"), default=False).ask():
+        console.print("[dim]" + _("You can transcribe it later with \"Transcribe + identify\".") + "[/dim]")
         return
-    _transcribir(proyecto, audio)
+    _transcribe(project, audio)
 
 
-def accion_transcribir():
-    proyecto = elegir_proyecto()
-    if not proyecto:
+def do_transcribe():
+    project = choose_project()
+    if not project:
         return
-    audio = elegir_audio(proyecto)
+    audio = choose_audio(project)
     if not audio or not audio.exists():
-        console.print("[red]Archivo no encontrado.[/red]")
+        console.print("[red]" + _("File not found.") + "[/red]")
         return
-    _transcribir(proyecto, audio)
+    _transcribe(project, audio)
 
 
-def _transcribir(proyecto, audio):
-    eleccion = elegir_motor_idioma()
-    if eleccion is None:
+def _transcribe(project, audio):
+    choice = choose_engine_language()
+    if choice is None:
         return
-    motor, modelo, idioma = eleccion
-    if _falta_clave(motor):
+    engine, model, language = choice
+    if _key_is_missing(engine):
         return
-    en_bg = questionary.select(
-        "¿Cómo transcribir?",
+    background = _select(
+        _("How to transcribe?"),
         choices=[
-            questionary.Choice("Primer plano (esperar aquí a que termine)", value=False),
-            questionary.Choice("Segundo plano (misma calidad; puedes grabar otra reunión mientras tanto)", value=True),
+            _choice(_("Foreground (wait here until it's done)"), False),
+            _choice(_("Background (same quality; you can record another meeting meanwhile)"), True),
         ],
     ).ask()
-    if en_bg is None:
+    if background is None:
         return
-    if en_bg:
-        tareas.lanzar(audio, proyecto, motor, modelo, idioma)
-        console.print("[dim]Transcribiendo en segundo plano. El progreso se ve arriba del menú principal.\n"
-                      "Cuando termine, revísalo en \"Revisar hablantes\".[/dim]")
+    if background:
+        jobs.start(audio, project, engine, model, language)
+        console.print("[dim]" + _("Transcribing in the background. Progress shows above the main menu.\n"
+                                  "When it's done, review it in \"Review speakers\".") + "[/dim]")
         return
 
-    from . import transcribir
+    from . import transcribe
     try:
-        transcribir.transcribir(audio, motor=motor, modelo=modelo, idioma=idioma, diarizar=True, proyecto=proyecto)
+        transcribe.transcribe(audio, engine=engine, model=model, language=language, diarize=True, project=project)
     except KeyboardInterrupt:
-        console.print("[yellow]Transcripción cancelada.[/yellow]")
+        console.print("[yellow]" + _("Transcription cancelled.") + "[/yellow]")
         return
     except Exception as e:
-        console.print(f"[red]Error: {escape(str(e))}[/red]")
+        console.print("[red]" + escape(_("Error: {error}", error=e)) + "[/red]")
         return
-    sidecar = audio.with_suffix(revisar.SUFIJO)
+    sidecar = audio.with_suffix(review.SUFFIX)
     if sidecar.exists():
-        mostrar_clusters(sidecar)
-        if questionary.confirm("¿Revisar los hablantes ahora?", default=False).ask():
-            revisar_sidecar(sidecar, proyecto)
+        show_clusters(sidecar)
+        if questionary.confirm(_("Review the speakers now?"), default=False).ask():
+            review_sidecar(sidecar, project)
 
 
-def mostrar_en_curso():
-    """Imprime las transcripciones en segundo plano; devuelve cuántas siguen."""
+def show_jobs():
+    """Prints the background transcriptions; returns how many are still running."""
     n = 0
-    for t, est, texto in tareas.revisar_en_curso():
-        nombre = Path(t["audio"]).stem
-        if est == "en_curso":
-            console.print(f"[cyan]En curso:[/cyan] {nombre} · {texto}")
+    for job, status, text in jobs.check_jobs():
+        name = escape(Path(job["audio"]).stem)
+        if status == "running":
+            console.print(_("[cyan]Running:[/cyan] {name} · {text}", name=name, text=text))
             n += 1
-        elif est == "terminada":
-            console.print(f"[green]Terminada:[/green] {nombre} ({texto})")
+        elif status == "done":
+            console.print(_("[green]Done:[/green] {name} ({text})", name=name, text=text))
         else:
-            console.print(f"[red]Falló:[/red] {nombre} · {texto}")
+            console.print(_("[red]Failed:[/red] {name} · {text}", name=name, text=escape(text)))
     return n
 
 
-# ── Revisar hablantes ────────────────────────────────────────────────────────
+# ── Review speakers ──────────────────────────────────────────────────────────
 
-def mostrar_clusters(sidecar):
-    data = revisar.leer(sidecar)
-    tabla = Table(title=f"Hablantes: {Path(sidecar).name}")
-    for col in ("Cluster", "Nombre asignado", "Similitud", "Duración hablada"):
-        tabla.add_column(col)
+def show_clusters(sidecar):
+    data = review.load(sidecar)
+    table = Table(title=_("Speakers: {name}", name=Path(sidecar).name))
+    for col in (_("Cluster"), _("Assigned name"), _("Similarity"), _("Speech time")):
+        table.add_column(col)
     for spk, info in data["clusters"].items():
-        sim = info["similitud"]
-        estilo = "yellow" if info["nombre"].startswith("Hablante ") else "green"
-        tabla.add_row(spk, f"[{estilo}]{escape(info['nombre'])}[/{estilo}]",
-                      f"{sim:.2f}" if sim is not None else "-", f"{info['duracion_hablada']:.0f}s")
-    console.print(tabla)
+        sim = info["similarity"]
+        style = "yellow" if info.get("unnamed") else "green"
+        table.add_row(spk, f"[{style}]{escape(info['name'])}[/{style}]",
+                      f"{sim:.2f}" if sim is not None else "-", f"{info['speech_seconds']:.0f}s")
+    console.print(table)
 
 
-def reproducir_muestra(origen):
-    if not origen:
-        console.print("[yellow]Esta muestra no tiene audio de origen guardado.[/yellow]")
+def play_sample(origin):
+    if not origin:
+        console.print("[yellow]" + _("This sample has no source audio saved.") + "[/yellow]")
         return
-    ruta = Path(origen["audio"])
-    if not ruta.exists():
-        console.print(f"[yellow]No se encuentra el audio original: {ruta}[/yellow]")
+    path = Path(origin["audio"])
+    if not path.exists():
+        console.print("[yellow]" + escape(_("Source audio not found: {path}", path=path)) + "[/yellow]")
         return
-    console.print(f"[dim]▶ {ruta.name} [{origen['inicio']:.1f}s-{origen['fin']:.1f}s] (Ctrl+C para cortar)[/dim]")
+    console.print("[dim]" + escape(_("▶ {name} [{start:.1f}s-{end:.1f}s] (Ctrl+C to stop)",
+                                     name=path.name, start=origin["start"], end=origin["end"])) + "[/dim]")
     try:
-        audio_util.reproducir(ruta, origen["inicio"], origen["fin"])
+        audio_util.play(path, origin["start"], origin["end"])
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        console.print(f"[yellow]No se pudo reproducir: {escape(str(e))}[/yellow]")
+        console.print("[yellow]" + escape(_("Couldn't play it: {error}", error=e)) + "[/yellow]")
 
 
-def _pedir_nombre(pregunta, conocidos):
-    if conocidos:
-        return questionary.autocomplete(pregunta, choices=conocidos).ask()
-    return questionary.text(pregunta).ask()
+def _ask_name(question, known):
+    if known:
+        return questionary.autocomplete(question, choices=known).ask()
+    return questionary.text(question).ask()
 
 
-def revisar_sidecar(sidecar, proyecto):
-    """Revisa los hablantes uno a uno; cada decisión se guarda al momento, así
-    que Esc para sin perder nada y la próxima vez retoma donde se quedó."""
-    data = revisar.leer(sidecar)
-    frases = revisar.frases_por_cluster(sidecar)
-    ya = sum(1 for c in data["clusters"].values() if c.get("revisado"))
-    if ya:
-        console.print(f"[dim]Retomando: {ya} hablante(s) ya revisados la otra vez.[/dim]")
+def _print_decision(name, r, project):
+    if r["added"]:
+        console.print("  [green]✓[/green] " + escape(_n("{name}: {n} sample in {project}",
+                                                         "{name}: {n} samples in {project}",
+                                                         r["samples"], name=name, project=project)))
+    else:
+        console.print("  [dim]" + escape(_n("{name} already had an almost identical sample: not adding another "
+                                            "({n} sample)",
+                                            "{name} already had an almost identical sample: not adding another "
+                                            "({n} samples)", r["samples"], name=name)) + "[/dim]")
 
-    cambios = 0
-    completa = data.get("revisado", False)
+
+def review_sidecar(sidecar, project):
+    """Reviews the speakers one by one; every decision is saved at once, so Esc
+    stops without losing anything and next time it resumes where it was."""
+    data = review.load(sidecar)
+    quotes = review.quotes_by_cluster(sidecar)
+    done = sum(1 for c in data["clusters"].values() if c.get("reviewed"))
+    if done:
+        console.print("[dim]" + _n("Resuming: {n} speaker already reviewed last time.",
+                                   "Resuming: {n} speakers already reviewed last time.", done) + "[/dim]")
+
+    changes = 0
+    complete = data.get("reviewed", False)
     for spk, info in data["clusters"].items():
-        if info.get("revisado"):
+        if info.get("reviewed"):
             continue
-        actual = info["nombre"]
-        console.print(f"\n[bold]{spk}[/bold] ({escape(actual)}) dijo, entre otras cosas:")
-        for frase in frases.get(spk) or ["(no hay frases largas suyas en la transcripción)"]:
-            console.print(f"  [dim]«{escape(frase)}»[/dim]")
+        current = info["name"]
+        console.print("\n" + _("[bold]{speaker}[/bold] ({name}) said, among other things:",
+                               speaker=spk, name=escape(current)))
+        for quote in quotes.get(spk) or [_("(no long sentences of theirs in the transcript)")]:
+            console.print(f"  [dim]«{escape(quote)}»[/dim]")
 
-        nuevo = None
-        while nuevo is None:
-            eleccion = questionary.select(
-                f"{spk} ({info['duracion_hablada']:.0f}s hablados) → asignado como '{actual}'",
+        new = None
+        while new is None:
+            choice = _select(
+                _("{speaker} ({seconds:.0f}s of speech) → assigned as '{name}'",
+                  speaker=spk, seconds=info["speech_seconds"], name=current),
                 choices=[
-                    questionary.Choice("Reproducir", value="play"),
-                    questionary.Choice("Confirmar (y reforzar la muestra)", value="ok"),
-                    questionary.Choice("Corregir nombre", value="corregir"),
-                    questionary.Choice("Saltar (no lo identifico; no se guarda nada en la librería)", value="saltar"),
+                    _choice(_("Play"), "play"),
+                    _choice(_("Confirm (and reinforce the sample)"), "ok"),
+                    _choice(_("Correct the name"), "correct"),
+                    _choice(_("Skip (I don't know who it is; nothing is saved in the library)"), "skip"),
                 ],
             ).ask()
-            if eleccion is None:
-                faltan = sum(1 for c in revisar.leer(sidecar)["clusters"].values() if not c.get("revisado"))
-                console.print(f"[yellow]Revisión parada. Faltan {faltan} hablante(s); "
-                              f"sigue pendiente en \"Revisar hablantes\".[/yellow]")
+            if choice is None:
+                left = review.remaining(sidecar)
+                console.print("[yellow]" + _n("Review stopped. {n} speaker left; it's still pending in "
+                                              "\"Review speakers\".",
+                                              "Review stopped. {n} speakers left; it's still pending in "
+                                              "\"Review speakers\".", left) + "[/yellow]")
                 return
-            if eleccion == "play":
-                reproducir_muestra(info.get("origen"))
-            elif eleccion == "saltar":
-                nuevo = ""
-            elif eleccion == "ok":
-                nuevo = actual
+            if choice == "play":
+                play_sample(info.get("origin"))
+            elif choice == "skip":
+                new = ""
+            elif choice == "ok":
+                new = current
             else:
-                # Esc o nombre vacío: volver al menú de este mismo hablante
-                nuevo = _pedir_nombre("Nombre correcto:", revisar.nombres_conocidos(sidecar, proyecto)) or None
+                # Esc or empty name: back to this same speaker's menu
+                new = _ask_name(_("Right name:"), review.known_names(sidecar, project)) or None
 
-        r = revisar.decidir(sidecar, spk, nuevo, proyecto)
-        completa = r["completa"]
-        if nuevo:
-            cambios += 1
-            if r["anadida"]:
-                console.print(f"  [green]✓[/green] {escape(nuevo)}: {r['muestras']} muestras en {proyecto}")
-            else:
-                console.print(f"  [dim]{escape(nuevo)} ya tenía una muestra casi idéntica: no se añade otra "
-                              f"({r['muestras']} muestras)[/dim]")
-            if r["renombradas"]:
-                console.print(f"  [dim]Renombrado en la transcripción ({r['renombradas']} apariciones)[/dim]")
+        r = review.decide(sidecar, spk, new, project)
+        complete = r["complete"]
+        if new:
+            changes += 1
+            _print_decision(new, r, project)
+            if r["renamed"]:
+                console.print("  [dim]" + _n("Renamed in the transcript ({n} time)",
+                                             "Renamed in the transcript ({n} times)", r["renamed"]) + "[/dim]")
 
-    console.print(f"[bold green]Revisión completa: {cambios} hablante(s) confirmados o corregidos.[/bold green]")
-    if completa:
-        console.print("\nComprimiendo el audio a Opus para archivarlo (no cierres todavía)...")
+    console.print("[bold green]" + _n("Review complete: {n} speaker confirmed or corrected.",
+                                      "Review complete: {n} speakers confirmed or corrected.", changes)
+                  + "[/bold green]")
+    if complete:
+        console.print("\n" + _("Compressing the audio to Opus to archive it (don't close yet)..."))
         try:
-            if hecho := revisar.archivar_si_completa(sidecar):
-                console.print(f"[dim]Audio archivado como {hecho[0].name} ({hecho[1] / 1e6:.0f} MB menos).[/dim]")
-        except Exception as e:  # el WAV se queda tal cual si algo falla
-            console.print(f"[yellow]No se pudo comprimir: {escape(str(e))}[/yellow]")
+            if result := review.archive_if_complete(sidecar):
+                console.print("[dim]" + _("Audio archived as {name} ({mb:.0f} MB less).",
+                                          name=result[0].name, mb=result[1] / 1e6) + "[/dim]")
+        except Exception as e:  # the WAV stays as it is if something fails
+            console.print("[yellow]" + escape(_("Couldn't compress it: {error}", error=e)) + "[/yellow]")
 
 
-def revisar_hablantes(solo_proyecto=None):
-    pendientes = revisar.pendientes(solo_proyecto)
-    if not pendientes:
-        console.print("[green]No hay transcripciones pendientes de revisar.[/green]")
+def review_speakers(only_project=None):
+    todo = review.pending(only_project)
+    if not todo:
+        console.print("[green]" + _("No transcripts waiting for review.") + "[/green]")
         return
-    opciones = []
-    for proyecto, s in pendientes[:15]:
-        titulo = s.name.removesuffix(revisar.SUFIJO) + ("" if solo_proyecto else f" · {proyecto}")
-        opciones.append(questionary.Choice(titulo, value=(proyecto, s)))
-    eleccion = questionary.select("¿Qué transcripción revisar?", choices=opciones).ask()
-    if not eleccion:
+    options = []
+    for project, s in todo[:15]:
+        title = review.meeting_name(s) + ("" if only_project else f" · {project}")
+        options.append(_choice(title, (project, s)))
+    choice = _select(_("Which transcript to review?"), choices=options).ask()
+    if not choice:
         return
-    proyecto, sidecar = eleccion
-    mostrar_clusters(sidecar)
-    revisar_sidecar(sidecar, proyecto)
+    project, sidecar = choice
+    show_clusters(sidecar)
+    review_sidecar(sidecar, project)
 
 
-# ── Personas (librería de voces) ─────────────────────────────────────────────
+# ── People (voice library) ───────────────────────────────────────────────────
 
-def _etiqueta_muestra(muestra):
-    origen = muestra.get("origen")
-    if origen:
-        dur = origen["fin"] - origen["inicio"]
-        return f"{dur:.0f}s de {Path(origen['audio']).name} [{origen['inicio']:.0f}s-{origen['fin']:.0f}s]"
-    return "sin origen guardado (no se puede reproducir)"
-
-
-def _buscar_muestra(proyecto, nombre, id_muestra):
-    datos = voiceprints.cargar_libreria_con_origen(proyecto)
-    return next((m for m in datos.get(nombre, []) if m["id"] == id_muestra), None)
+def _sample_label(sample):
+    origin = sample.get("origin")
+    if origin:
+        return _("{seconds:.0f}s of {name} [{start:.0f}s-{end:.0f}s]", seconds=origin["end"] - origin["start"],
+                 name=Path(origin["audio"]).name, start=origin["start"], end=origin["end"])
+    return _("no source saved (can't be played)")
 
 
-def _reclasificar(proyecto, nombre, id_muestra):
-    nuevo = _pedir_nombre(f"{nombre}: ¿a qué persona pertenece de verdad? (nombre nuevo si no está en la lista)",
-                          sorted(voiceprints.cargar_libreria(proyecto).keys()))
-    if not nuevo or nuevo == nombre:
+def _no_voices(project):
+    console.print("[yellow]" + _("Project {project} has no saved voices yet.", project=project) + "[/yellow]")
+
+
+def _move(project, name, sample_id):
+    new = _ask_name(_("{name}: who does it really belong to? (a new name if they're not on the list)", name=name),
+                    sorted(voiceprints.load_library(project)))
+    if not new or new == name:
         return False
-    voiceprints.reclasificar_muestra(proyecto, nombre, id_muestra, nuevo)
-    console.print(f"[green]✓[/green] Movida a {escape(nuevo)}")
+    voiceprints.move_sample(project, name, sample_id, new)
+    console.print("[green]✓[/green] " + escape(_("Moved to {name}", name=new)))
     return True
 
 
-def _gestionar_muestra(proyecto, nombre, id_muestra):
+def _manage_sample(project, name, sample_id):
     while True:
-        muestra = _buscar_muestra(proyecto, nombre, id_muestra)
-        if muestra is None:
-            console.print("[dim]Esa muestra ya no existe (se borró o se movió).[/dim]")
+        sample = voiceprints.find_sample(project, name, sample_id)
+        if sample is None:
+            console.print("[dim]" + _("That sample no longer exists (it was deleted or moved).") + "[/dim]")
             return
-        accion = questionary.select(
-            f"{nombre}: {_etiqueta_muestra(muestra)}",
-            choices=["Reproducir", "Reclasificar a otra persona", "Borrar esta muestra", "Volver"],
+        action = _select(
+            f"{name}: {_sample_label(sample)}",
+            choices=[_choice(_("Play"), "play"), _choice(_("Move to another person"), "move"),
+                     _choice(_("Delete this sample"), "delete"), _choice(_("Back"), BACK)],
         ).ask()
-        if accion is None or accion == "Volver":
+        if action in (None, BACK):
             return
-        if accion == "Reproducir":
-            reproducir_muestra(muestra.get("origen"))
-        elif accion == "Borrar esta muestra":
-            voiceprints.eliminar_muestra(proyecto, nombre, id_muestra)
-            console.print("[green]✓[/green] Muestra eliminada")
+        if action == "play":
+            play_sample(sample.get("origin"))
+        elif action == "delete":
+            voiceprints.delete_sample(project, name, sample_id)
+            console.print("[green]✓[/green] " + _("Sample deleted"))
             return
-        elif _reclasificar(proyecto, nombre, id_muestra):
+        elif _move(project, name, sample_id):
             return
 
 
-def _personas_ver_resumen(proyecto):
-    datos = voiceprints.cargar_libreria_con_origen(proyecto)
-    if not datos:
-        console.print(f"[yellow]El proyecto {proyecto} aún no tiene voces guardadas.[/yellow]")
-        return
-    tabla = Table(title=f"Proyecto: {proyecto}")
-    for col in ("Persona", "Muestras", "Con audio reproducible"):
-        tabla.add_column(col)
-    for nombre, muestras in sorted(datos.items()):
-        con_audio = sum(1 for m in muestras if m.get("origen"))
-        tabla.add_row(escape(nombre), str(len(muestras)), f"{con_audio}/{len(muestras)}")
-    console.print(tabla)
+def _people_summary(project):
+    data = voiceprints.load_samples(project)
+    if not data:
+        return _no_voices(project)
+    table = Table(title=_("Project: {project}", project=project))
+    for col in (_("Person"), _("Samples"), _("With playable audio")):
+        table.add_column(col)
+    for name, samples in sorted(data.items()):
+        playable = sum(1 for s in samples if s.get("origin"))
+        table.add_row(escape(name), str(len(samples)), f"{playable}/{len(samples)}")
+    console.print(table)
 
 
-def _personas_explorar(proyecto):
+def _people_browse(project):
     while True:
-        datos = voiceprints.cargar_libreria_con_origen(proyecto)
-        if not datos:
-            console.print(f"[yellow]El proyecto {proyecto} aún no tiene voces guardadas.[/yellow]")
-            return
-        opciones = [questionary.Choice(f"{n} ({len(m)} muestras)", value=n) for n, m in sorted(datos.items())]
-        nombre = questionary.select("Persona:", choices=opciones + ["Volver"]).ask()
-        if nombre is None or nombre == "Volver":
+        data = voiceprints.load_samples(project)
+        if not data:
+            return _no_voices(project)
+        options = [_choice(_n("{name} ({n} sample)", "{name} ({n} samples)", len(s), name=n), n)
+                   for n, s in sorted(data.items())]
+        name = _select(_("Person:"), choices=options + [_choice(_("Back"), BACK)]).ask()
+        if name in (None, BACK):
             return
         while True:
-            muestras = voiceprints.cargar_libreria_con_origen(proyecto).get(nombre, [])
-            if not muestras:
-                console.print(f"[dim]{escape(nombre)} ya no tiene muestras.[/dim]")
+            samples = voiceprints.load_samples(project).get(name, [])
+            if not samples:
+                console.print("[dim]" + escape(_("{name} has no samples left.", name=name)) + "[/dim]")
                 break
-            opciones_m = [questionary.Choice(_etiqueta_muestra(m), value=m["id"]) for m in muestras]
-            id_muestra = questionary.select(f"{nombre}: elige una muestra:", choices=opciones_m + ["Volver"]).ask()
-            if id_muestra is None or id_muestra == "Volver":
+            options = [_choice(_sample_label(s), s["id"]) for s in samples]
+            sample_id = _select(_("{name}: pick a sample:", name=name),
+                                           choices=options + [_choice(_("Back"), BACK)]).ask()
+            if sample_id in (None, BACK):
                 break
-            _gestionar_muestra(proyecto, nombre, id_muestra)
+            _manage_sample(project, name, sample_id)
 
 
-def _personas_borrar_entera(proyecto):
-    datos = voiceprints.cargar_libreria(proyecto)
-    if not datos:
-        console.print(f"[yellow]El proyecto {proyecto} aún no tiene voces guardadas.[/yellow]")
+def _people_delete(project):
+    data = voiceprints.load_library(project)
+    if not data:
+        return _no_voices(project)
+    name = _select(_("Delete whom?"), choices=sorted(data) + [_choice(_("Cancel"), BACK)]).ask()
+    if name in (None, BACK):
         return
-    eleccion = questionary.select("¿Borrar a quién?", choices=sorted(datos.keys()) + ["Cancelar"]).ask()
-    if not eleccion or eleccion == "Cancelar":
+    question = _n("Are you sure you want to delete {name} and their {n} sample?",
+                  "Are you sure you want to delete {name} and their {n} samples?", len(data[name]), name=name)
+    if questionary.confirm(question, default=False).ask():
+        voiceprints.delete_person(project, name)
+        console.print("[green]✓[/green] " + escape(_("{name} deleted from project {project}",
+                                                     name=name, project=project)))
+
+
+def _people_undo(project):
+    if not voiceprints.has_backup(project):
+        console.print("[yellow]" + _("Nothing to undo yet (nothing has been deleted or moved).") + "[/yellow]")
         return
-    n = len(datos[eleccion])
-    if questionary.confirm(f"¿Seguro que quieres borrar a {eleccion} y sus {n} muestras?", default=False).ask():
-        voiceprints.eliminar_persona(proyecto, eleccion)
-        console.print(f"[green]✓[/green] {escape(eleccion)} eliminado del proyecto {proyecto}")
+    if questionary.confirm(_("This undoes the last delete or move (one step back only). Restore?"),
+                           default=False).ask():
+        voiceprints.restore_backup(project)
+        console.print("[green]✓[/green] " + _("Project {project} restored to before the last change.",
+                                              project=project))
 
 
-def _personas_restaurar_backup(proyecto):
-    if not Path(voiceprints.ruta_libreria(proyecto) + ".bak").exists():
-        console.print("[yellow]No hay backup disponible (todavía no se ha borrado/reclasificado nada).[/yellow]")
-        return
-    if questionary.confirm(
-        "Esto deshace el último borrado o reclasificación (un solo paso atrás). ¿Restaurar?", default=False
-    ).ask():
-        voiceprints.restaurar_backup(proyecto)
-        console.print(f"[green]✓[/green] Proyecto {proyecto} restaurado al estado anterior al último cambio.")
-
-
-def _personas_enrolar_manual(proyecto):
-    audio = elegir_audio(proyecto)
+def _people_enroll(project):
+    audio = choose_audio(project)
     if not audio or not audio.exists():
-        console.print("[red]Archivo no encontrado.[/red]")
+        console.print("[red]" + _("File not found.") + "[/red]")
         return
-    inicio = questionary.text("Inicio (segundos):").ask()
-    fin = questionary.text("Fin (segundos):").ask()
-    nombre = questionary.text("Nombre de la persona:").ask()
-    if not (inicio and fin and nombre):
+    start = questionary.text(_("Start (seconds):")).ask()
+    end = questionary.text(_("End (seconds):")).ask()
+    name = questionary.text(_("Person's name:")).ask()
+    if not (start and end and name):
         return
-    n, anadida = revisar.enrolar(audio, float(inicio), float(fin), nombre, proyecto)
-    if anadida:
-        console.print(f"[green]✓[/green] {escape(nombre)}: {n} muestras en {proyecto}")
-    else:
-        console.print(f"[dim]{escape(nombre)} ya tenía una muestra casi idéntica: no se añade otra ({n} muestras)[/dim]")
+    n, added = review.enroll(audio, float(start), float(end), name, project)
+    _print_decision(name, {"added": added, "samples": n}, project)
 
 
-def _personas_reparar():
-    from . import rutas
+def _people_repair():
+    from . import repair
 
-    r = rutas.reparar()
-    for viejo, nuevo, refs in r["arregladas"]:
-        console.print(f"[green]✓[/green] {escape(Path(viejo).name)} → {escape(str(Path(nuevo).parent))} ({refs})")
-    for viejo, _ in r["dudosas"]:
-        console.print(f"[yellow]Varios candidatos para {escape(viejo)}: no se toca[/yellow]")
-    for viejo in r["sin_encontrar"]:
-        console.print(f"[yellow]No encontrado: {escape(viejo)}[/yellow]")
+    r = repair.repair()
+    for old, new, refs in r["fixed"]:
+        console.print(f"[green]✓[/green] {escape(Path(old).name)} → {escape(str(Path(new).parent))} ({refs})")
+    for old, _candidates in r["ambiguous"]:
+        console.print("[yellow]" + escape(_("Several candidates for {path}: left alone", path=old)) + "[/yellow]")
+    for old in r["not_found"]:
+        console.print("[yellow]" + escape(_("Not found: {path}", path=old)) + "[/yellow]")
     if not any(r.values()):
-        console.print("[green]Todas las muestras apuntan a audios que existen.[/green]")
+        console.print("[green]" + _("Every sample points at an audio file that exists.") + "[/green]")
 
 
-def _personas_auditar(proyecto):
-    """Un único menú plano por hallazgo: "Siguiente" es la opción por defecto,
-    así que si todo está bien basta con pulsar Enter. Recalcula tras cada
-    acción, así que un hallazgo arreglado desaparece solo de la lista.
-    "Siguiente" solo lo salta en esta sesión; "Marcar como correcto" lo guarda
-    para no volver a avisar nunca."""
-    vistos = set()
+def _people_audit(project):
+    """One flat menu per finding: "Next" is the default, so if everything is
+    fine, Enter is enough. It recomputes after every action, so a fixed finding
+    disappears from the list. "Next" skips it only for this session; "Mark as
+    fine" saves it so it's never flagged again."""
+    seen = set()
 
-    def clave(p):
-        return (p["tipo"], p["id_a"], p["id_b"])
+    def key(f):
+        return (f["kind"], f["id_a"], f["id_b"])
 
     while True:
-        pendientes = [p for p in voiceprints.auditar_libreria(proyecto) if clave(p) not in vistos]
-        if not pendientes:
-            if vistos:
-                console.print(f"[bold green]No quedan hallazgos por revisar[/bold green] ({len(vistos)} saltados "
-                              "esta sesión; volverán a aparecer si no se arreglan).")
+        todo = [f for f in voiceprints.audit_library(project) if key(f) not in seen]
+        if not todo:
+            if seen:
+                console.print("[bold green]" + _n(
+                    "No findings left to review ({n} skipped this session; they'll show up again if not fixed).",
+                    "No findings left to review ({n} skipped this session; they'll show up again if not fixed).",
+                    len(seen)) + "[/bold green]")
             else:
-                console.print(f"[green]Sin hallazgos pendientes en el proyecto {proyecto}[/green]")
+                console.print("[green]" + _("No pending findings in project {project}", project=project) + "[/green]")
             return
 
-        p = max(pendientes, key=lambda p: p["similitud"] if p["tipo"] in ("confusion", "duplicado") else -p["similitud"])
-        a, b = escape(p["nombre_a"]), escape(p["nombre_b"])
-        console.print(f"[dim]{len(pendientes)} hallazgo(s) pendientes[/dim]")
-        if p["tipo"] == "confusion":
-            color = "red" if p["similitud"] >= voiceprints.UMBRAL_DEFECTO else "yellow"
-            console.print(f"[{color}]Posible confusión[/{color}]: {a} / {b} (similitud {p['similitud']:.2f})")
-        elif p["tipo"] == "duplicado":
-            console.print(f"[cyan]Muestras casi duplicadas[/cyan]: {a} (similitud {p['similitud']:.2f}); "
-                          "probablemente puedes borrar una")
+        f = voiceprints.most_urgent_first(todo)[0]
+        a, b, sim = escape(f["name_a"]), escape(f["name_b"]), f["similarity"]
+        console.print("[dim]" + _n("{n} pending finding", "{n} pending findings", len(todo)) + "[/dim]")
+        if f["kind"] == "confusion":
+            color = "red" if sim >= voiceprints.DEFAULT_THRESHOLD else "yellow"
+            console.print(f"[{color}]" + _("Possible confusion") + f"[/{color}]: {a} / {b} "
+                          + _("(similarity {similarity:.2f})", similarity=sim))
+        elif f["kind"] == "duplicate":
+            console.print("[cyan]" + _("Almost duplicate samples") + f"[/cyan]: {a} "
+                          + _("(similarity {similarity:.2f}); you can probably delete one", similarity=sim))
         else:
-            console.print(f"[yellow]Muestras dispersas[/yellow]: {a} (similitud {p['similitud']:.2f})")
+            console.print("[yellow]" + _("Spread-out samples") + f"[/yellow]: {a} "
+                          + _("(similarity {similarity:.2f})", similarity=sim))
 
-        lados = {"A": (p["nombre_a"], p["id_a"]), "B": (p["nombre_b"], p["id_b"])}
-        opciones = [questionary.Choice("Siguiente (sin cambios)", value=("siguiente", None))]
-        for verbo in ("Reproducir", "Borrar", "Reclasificar"):
-            for lado, (nombre, _) in lados.items():
-                opciones.append(questionary.Choice(f"{verbo} {lado} ({nombre})", value=(verbo, lado)))
-        opciones += [questionary.Choice("Marcar como correcto (no volver a avisar)", value=("correcto", None)),
-                     questionary.Choice("Salir de la auditoría", value=("salir", None))]
-        accion = questionary.select("¿Qué hacemos?", choices=opciones, default=opciones[0]).ask()
+        sides = {"A": (f["name_a"], f["id_a"]), "B": (f["name_b"], f["id_b"])}
+        options = [_choice(_("Next (no changes)"), ("next", None))]
+        for verb, label in (("play", _("Play {side} ({name})")), ("delete", _("Delete {side} ({name})")),
+                            ("move", _("Move {side} ({name})"))):
+            for side, (name, _id) in sides.items():
+                options.append(_choice(label.format(side=side, name=name), (verb, side)))
+        options += [_choice(_("Mark as fine (don't flag it again)"), ("ok", None)),
+                    _choice(_("Leave the audit"), ("quit", None))]
+        action = _select(_("What do we do?"), choices=options, default=options[0]).ask()
 
-        if accion is None or accion[0] == "salir":
+        if action is None or action[0] == "quit":
             return
-        verbo, lado = accion
-        if verbo == "siguiente":
-            vistos.add(clave(p))
-        elif verbo == "correcto":
-            voiceprints.marcar_como_correcto(proyecto, p["tipo"], p["id_a"], p["id_b"])
-            console.print("[green]✓[/green] Marcado como correcto, no volverá a aparecer.")
+        verb, side = action
+        if verb == "next":
+            seen.add(key(f))
+        elif verb == "ok":
+            voiceprints.mark_as_ok(project, f["kind"], f["id_a"], f["id_b"])
+            console.print("[green]✓[/green] " + _("Marked as fine, it won't show up again."))
         else:
-            nombre, id_muestra = lados[lado]
-            if verbo == "Reproducir":
-                m = _buscar_muestra(proyecto, nombre, id_muestra)
-                reproducir_muestra(m.get("origen") if m else None)
-            elif verbo == "Borrar":
-                voiceprints.eliminar_muestra(proyecto, nombre, id_muestra)
-                console.print(f"[green]✓[/green] Muestra de {escape(nombre)} eliminada.")
+            name, sample_id = sides[side]
+            if verb == "play":
+                sample = voiceprints.find_sample(project, name, sample_id)
+                play_sample(sample.get("origin") if sample else None)
+            elif verb == "delete":
+                voiceprints.delete_sample(project, name, sample_id)
+                console.print("[green]✓[/green] " + escape(_("Sample of {name} deleted.", name=name)))
             else:
-                _reclasificar(proyecto, nombre, id_muestra)
+                _move(project, name, sample_id)
         console.print()
 
 
-def menu_personas():
-    proyecto = elegir_proyecto()
-    if not proyecto:
+def people_menu():
+    project = choose_project()
+    if not project:
         return
-    acciones = {
-        "Ver resumen": lambda: _personas_ver_resumen(proyecto),
-        "Auditar y corregir": lambda: _personas_auditar(proyecto),
-        "Corregir hablantes (transcripción reciente)": lambda: revisar_hablantes(solo_proyecto=proyecto),
-        "Explorar por persona (reproducir / reclasificar / borrar)": lambda: _personas_explorar(proyecto),
-        "Añadir muestra manual": lambda: _personas_enrolar_manual(proyecto),
-        "Borrar persona entera": lambda: _personas_borrar_entera(proyecto),
-        "Restaurar backup (deshacer último borrado/cambio)": lambda: _personas_restaurar_backup(proyecto),
-        "Reparar rutas (audios movidos de carpeta)": _personas_reparar,
-    }
+    actions = [
+        (_("See summary"), lambda: _people_summary(project)),
+        (_("Audit and fix"), lambda: _people_audit(project)),
+        (_("Correct speakers (recent transcript)"), lambda: review_speakers(only_project=project)),
+        (_("Browse by person (play / move / delete)"), lambda: _people_browse(project)),
+        (_("Add a sample by hand"), lambda: _people_enroll(project)),
+        (_("Delete a whole person"), lambda: _people_delete(project)),
+        (_("Undo the last delete or move"), lambda: _people_undo(project)),
+        (_("Repair paths (audio moved to another folder)"), _people_repair),
+    ]
     while True:
-        n = len(voiceprints.auditar_libreria(proyecto))
-        aviso = f" ({n} hallazgo(s) de auditoría pendientes)" if n else ""
-        eleccion = questionary.select(f"Personas, proyecto '{proyecto}'{aviso}:",
-                                      choices=list(acciones) + ["Volver al menú principal"]).ask()
-        if eleccion is None or eleccion == "Volver al menú principal":
+        n = len(voiceprints.audit_library(project))
+        title = _("People, project '{project}'", project=project)
+        if n:
+            title += " " + _n("({n} pending audit finding)", "({n} pending audit findings)", n)
+        choice = _select(title + ":", choices=[_choice(t, i) for i, (t, _f) in enumerate(actions)]
+                                    + [_choice(_("Back to the main menu"), BACK)]).ask()
+        if choice in (None, BACK):
             return
-        acciones[eleccion]()
+        actions[choice][1]()
         console.print()
 
 
-# ── Menú principal ───────────────────────────────────────────────────────────
+# ── Main menu ────────────────────────────────────────────────────────────────
+
+def choose_language():
+    current = config.load_state().get("language") or "auto"
+    choice = _select(
+        "Language / Idioma:",
+        choices=[_choice(_("Same as the system"), "auto")] + [_choice(n, c) for c, n in i18n.LANGUAGES.items()],
+        default=current,
+    ).ask()
+    if choice:
+        config.update_state(language=None if choice == "auto" else choice)
+        i18n.set_language(choice)
+
 
 def main():
-    console.print("[bold cyan]Escriba[/bold cyan]: grabación, transcripción e identificación de reuniones\n")
+    console.print(_("[bold cyan]Escriba[/bold cyan]: record, transcribe and identify speakers in meetings") + "\n")
     while True:
-        n_en_curso = mostrar_en_curso()
-        n_pendientes = len(revisar.pendientes())
-        revisar_txt = "Revisar hablantes" + (f" ({n_pendientes} pendientes)" if n_pendientes else " (nada pendiente)")
-        opciones = {
-            "Grabar reunión": accion_grabar,
-            "Transcribir + identificar": accion_transcribir,
-            revisar_txt: revisar_hablantes,
-            "Personas": menu_personas,
-        }
-        if n_en_curso:
-            opciones["Actualizar progreso"] = lambda: None  # el bucle vuelve a pintar el progreso
-        eleccion = questionary.select("¿Qué quieres hacer?", choices=list(opciones) + ["Salir"]).ask()
-        if eleccion is None or eleccion == "Salir":
+        running = show_jobs()
+        n = len(review.pending())
+        review_title = _("Review speakers") + " " + (
+            _n("({n} pending)", "({n} pending)", n) if n else _("(nothing pending)"))
+        options = [
+            (_("Record a meeting"), do_record),
+            (_("Transcribe + identify"), do_transcribe),
+            (review_title, review_speakers),
+            (_("People"), people_menu),
+        ]
+        if running:
+            options.append((_("Refresh progress"), lambda: None))  # the loop prints the progress again
+        options.append(("Language / Idioma", choose_language))
+        choice = _select(_("What do you want to do?"),
+                                    choices=[_choice(t, i) for i, (t, _f) in enumerate(options)]
+                                    + [_choice(_("Quit"), BACK)]).ask()
+        if choice in (None, BACK):
             break
-        opciones[eleccion]()
+        options[choice][1]()
         console.print()

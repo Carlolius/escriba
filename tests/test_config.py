@@ -5,56 +5,58 @@ import pytest
 from escriba import config
 
 
-def test_carpeta_de_datos_de_la_variable(datos):
-    assert config.dir_datos() == datos
-    assert config.dir_voiceprints() == datos / "voiceprints"
+def test_data_folder_from_the_variable(data):
+    assert config.data_dir() == data
+    assert config.voiceprints_dir() == data / "voiceprints"
 
 
-def test_secretos_guardar_y_leer():
-    assert config.leer_secreto("ASSEMBLYAI_API_KEY") is None
-    config.guardar_secreto("ASSEMBLYAI_API_KEY", "abc")
-    assert config.leer_secreto("ASSEMBLYAI_API_KEY") == "abc"
-    config.guardar_secreto("ASSEMBLYAI_API_KEY", "")
-    assert config.leer_secreto("ASSEMBLYAI_API_KEY") is None
+def test_save_and_read_secrets():
+    assert config.read_secret("ASSEMBLYAI_API_KEY") is None
+    config.save_secret("ASSEMBLYAI_API_KEY", "abc")
+    assert config.read_secret("ASSEMBLYAI_API_KEY") == "abc"
+    config.save_secret("ASSEMBLYAI_API_KEY", "")
+    assert config.read_secret("ASSEMBLYAI_API_KEY") is None
 
 
-def test_secretos_respetan_el_resto_del_archivo(datos):
-    ruta = datos / "secretos.env"
-    datos.mkdir(parents=True, exist_ok=True)
-    ruta.write_text("# mis claves\nOTRA=1\nHF_TOKEN=viejo\n", encoding="utf-8")
-    config.guardar_secreto("HF_TOKEN", "nuevo")
-    config.guardar_secreto("ASSEMBLYAI_API_KEY", "x")
-    assert ruta.read_text(encoding="utf-8") == "# mis claves\nOTRA=1\nHF_TOKEN=nuevo\nASSEMBLYAI_API_KEY=x\n"
+def test_secrets_keep_the_rest_of_the_file(data):
+    path = data / "secrets.env"
+    data.mkdir(parents=True, exist_ok=True)
+    path.write_text("# my keys\nOTHER=1\nHF_TOKEN=old\n", encoding="utf-8")
+    config.save_secret("HF_TOKEN", "new")
+    config.save_secret("ASSEMBLYAI_API_KEY", "x")
+    assert path.read_text(encoding="utf-8") == "# my keys\nOTHER=1\nHF_TOKEN=new\nASSEMBLYAI_API_KEY=x\n"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="enlaces simbólicos")
-def test_secretos_a_traves_de_un_enlace(datos, tmp_path):
-    real = tmp_path / "otro.env"
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links")
+def test_secrets_through_a_link(data, tmp_path):
+    real = tmp_path / "other.env"
     real.write_text("A=1\n", encoding="utf-8")
-    datos.mkdir(parents=True, exist_ok=True)
-    (datos / "secretos.env").symlink_to(real)
-    config.guardar_secreto("HF_TOKEN", "t")
-    assert (datos / "secretos.env").is_symlink()
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "secrets.env").symlink_to(real)
+    config.save_secret("HF_TOKEN", "t")
+    assert (data / "secrets.env").is_symlink()
     assert real.read_text(encoding="utf-8") == "A=1\nHF_TOKEN=t\n"
 
 
-def test_la_variable_de_entorno_manda(monkeypatch):
-    config.guardar_secreto("HF_TOKEN", "archivo")
-    monkeypatch.setenv("HF_TOKEN", "entorno")
-    assert config.leer_secreto("HF_TOKEN") == "entorno"
+def test_the_environment_variable_wins(monkeypatch):
+    config.save_secret("HF_TOKEN", "file")
+    monkeypatch.setenv("HF_TOKEN", "environment")
+    assert config.read_secret("HF_TOKEN") == "environment"
 
 
-def test_glosario_se_crea_vacio_y_se_lee():
-    assert config.leer_glosario() == []  # solo comentarios
-    config.ruta_glosario().write_text("# x\nAna, Pedro\n\nAcme\n", encoding="utf-8")
-    assert config.leer_glosario() == ["Ana, Pedro", "Acme"]
+def test_glossary_is_created_empty_and_read():
+    assert config.read_glossary() == []  # comments only
+    config.glossary_path().write_text("# x\nAna, Pedro\n\nAcme\n", encoding="utf-8")
+    assert config.read_glossary() == ["Ana, Pedro", "Acme"]
 
 
-def test_estado_y_proyectos():
-    assert config.cargar_estado() == {}
-    config.actualizar_estado(ultimo_proyecto="p")
-    config.actualizar_estado(tema="oscuro")
-    assert config.cargar_estado() == {"ultimo_proyecto": "p", "tema": "oscuro"}
-    config.crear_proyecto("p")
-    config.crear_proyecto("otro")
-    assert config.listar_proyectos() == ["otro", "p"]
+def test_state_and_projects():
+    assert config.load_state() == {}
+    config.update_state(last_project="p")
+    config.update_state(theme="dark")
+    config.set_project_dir("p", "/x")
+    assert config.load_state() == {"last_project": "p", "theme": "dark", "project_dirs": {"p": "/x"}}
+    assert config.project_dir("p") == "/x" and config.project_dir("other") is None
+    config.create_project("p")
+    config.create_project("other")
+    assert config.list_projects() == ["other", "p"]
