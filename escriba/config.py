@@ -119,7 +119,8 @@ _THREAD_LOCK = threading.RLock()
 
 # ── State (last project and folders, running jobs, preferences) ──────────────
 # Keys: last_project, project_dirs {project: folder}, jobs [{audio, log, pid,
-# project, engine, status, ended}], theme (system/light/dark), language,
+# project, engine, status, ended}], theme (system/light/dark), colors (see
+# themes.py), language,
 # output_device, mic, gpu.
 
 def load_state():

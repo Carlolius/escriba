@@ -4,7 +4,7 @@ from collections import deque
 
 from nicegui import background_tasks, run, ui
 
-from .. import config, extras, gpu, i18n, record
+from .. import config, extras, gpu, i18n, record, themes
 from ..i18n import N_, _, number
 from ..transcribe import local_available
 from .common import THEMES, frame, title
@@ -46,11 +46,16 @@ def page():
             ui.label(_("Recording")).classes("text-lg font-medium")
             devices = ui.column().classes("w-full")
 
-        with ui.card().classes("w-full gap-2"):
+        with ui.card().classes("w-full gap-3"):
             ui.label(_("Appearance")).classes("text-lg font-medium")
             ui.toggle({"system": _("Same as the system"), "light": _("Light"), "dark": _("Dark")},
                       value=config.load_state().get("theme", "system"),
                       on_change=lambda e: change_theme(e.value))
+            ui.label(_("Colors")).classes("text-sm soft-text")
+            current = themes.get(config.load_state().get("colors"))
+            with ui.row().classes("w-full gap-2"):
+                for key, theme in themes.THEMES.items():
+                    _theme_button(key, theme, theme is current)
 
         with ui.card().classes("w-full gap-2"):
             ui.label(_("Glossary")).classes("text-lg font-medium")
@@ -168,7 +173,7 @@ def _local_mode():
             with ui.row().classes("items-center gap-2"):
                 ui.icon("memory", color="primary")
                 ui.label(_("Graphics card: {name}", name=card["name"])).classes("font-medium")
-                ui.badge(_("experimental"), color="orange").props("rounded outline")
+                ui.badge(_("experimental"), color="warning").props("rounded outline")
             if not card["driver_ok"]:
                 ui.label(_("Its driver ({driver}) is too old to use it: update it to use the GPU.",
                            driver=card["driver"])).classes("text-sm text-warning")
@@ -249,7 +254,7 @@ def _key_field(key, name, help_text):
         with ui.row().classes("w-full items-end gap-2"):
             field = ui.input(name, password=True, password_toggle_button=True,
                              placeholder=placeholder if is_set else "").classes("grow")
-            badge = ui.badge(_("set") if is_set else _("missing"), color="positive" if is_set else "orange")
+            badge = ui.badge(_("set") if is_set else _("missing"), color="positive" if is_set else "warning")
             ui.button(_("Save"), on_click=lambda: save()).props("flat")
         ui.label(help_text).classes("text-sm soft-text")
 
@@ -264,3 +269,26 @@ def _key_field(key, name, help_text):
         badge.set_text(_("set"))
         badge.props("color=positive")
         ui.notify(_("{name} saved", name=name), type="positive")
+
+
+def _theme_button(key, theme, chosen):
+    """A button with the theme's name and colors (dark variant on the
+    left half, light on the right)."""
+    def dots(colors):
+        return "".join(f'<span style="width:12px;height:12px;border-radius:50%;display:inline-block;'
+                       f'background:{colors[c]}"></span>' for c in ("primary", "secondary", "accent"))
+    dark, light = theme["dark"], theme["light"]
+    sample = (f'<div style="display:flex;border-radius:8px;overflow:hidden;border:1px solid var(--escriba-line)">'
+              f'<div style="background:{dark["card"]};padding:6px 8px;display:flex;gap:4px">{dots(dark)}</div>'
+              f'<div style="background:{light["card"]};padding:6px 8px;display:flex;gap:4px">{dots(light)}</div>'
+              f'</div>')
+    with ui.button(on_click=lambda: change_colors(key)).props("flat no-caps") \
+            .classes("rounded-xl px-2 py-1" + (" ring-2 ring-[var(--q-primary)]" if chosen else "")):
+        with ui.column().classes("items-center gap-1"):
+            ui.html(sample, sanitize=False)
+            ui.label(theme["name"]).classes("text-sm").style("color: var(--escriba-text)")
+
+
+def change_colors(key):
+    config.update_state(colors=key)
+    ui.navigate.reload()

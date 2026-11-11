@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from nicegui import app, run, ui
 
 from .. import audio as audio_util
-from .. import config, jobs
+from .. import config, jobs, themes
 from ..i18n import N_, _, _n
 from ..paths import shown_path  # noqa: F401  (the pages import it from here)
 from ..transcribe import local_available, missing_key
@@ -56,29 +56,32 @@ def translated(options):
 
 STATIC = Path(__file__).parent / "static"
 LOGO = STATIC / "logo.svg"
-COLORS = {"primary": "#4f46e5", "secondary": "#f59e0b", "accent": "#0ea5e9",
-          "positive": "#16a34a", "negative": "#dc2626", "warning": "#f59e0b", "info": "#0ea5e9"}
+COLORS = {key: themes.THEMES[themes.DEFAULT]["light"][key] for key in themes.QUASAR}
+# The colors come from the theme's variables (themes.css)
 CSS = """
-:root { --escriba-bg: #f1f2fb; --escriba-card: #ffffff; --escriba-soft: #4b5563; --escriba-line: #e4e6f2; }
-body.body--dark { --escriba-bg: #0e0f1d; --escriba-card: #1a1b2f; --escriba-soft: #aab0c6; --escriba-line: #2c2e48; }
-body { background: var(--escriba-bg) !important; }
-.q-card { background: var(--escriba-card); border-radius: 14px; box-shadow: 0 1px 3px rgb(30 27 75 / 0.08),
-          0 6px 20px -8px rgb(30 27 75 / 0.12); }
+body { background: var(--escriba-bg) !important; color: var(--escriba-text); }
+.q-card, .q-menu, .q-dialog .q-card { background: var(--escriba-card); color: var(--escriba-text); }
+.q-card { border-radius: 14px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 6px 20px -8px rgb(0 0 0 / 0.12); }
 body.body--dark .q-card { box-shadow: 0 1px 3px rgb(0 0 0 / 0.5); }
+body.body--dark .q-field__native, body.body--dark .q-field__input { color: var(--escriba-text); }
 .soft-text { color: var(--escriba-soft); }
 .q-tab-panels, .q-tab-panel { background: transparent !important; }
 .q-tab-panel { padding: 8px 0; }
 .line-below { border-bottom: 1px solid var(--escriba-line); }
-.escriba-header { background: linear-gradient(100deg, #1e1b4b 0%, #312e81 45%, #4f46e5 100%); }
+.escriba-header { background: var(--escriba-header); }
 .escriba-header .q-field__native, .escriba-header .q-field__input { color: white; }
-/* In dark mode indigo can't be read on black: lighter primary, dark text on filled buttons */
-body.body--dark { --q-primary: #a5b4fc !important; }  /* NiceGUI sets it inline on <body> */
-body.body--dark .q-btn.bg-primary { color: #1e1b4b !important; }
+/* In a layer: Quasar's .text-white !important is in a layer too, and beats unlayered rules */
+@layer overrides {
+  .q-btn.bg-primary { color: var(--escriba-on-primary) !important; }
+  /* Light status colors in dark themes: dark text on them */
+  body.body--dark :is(.q-btn, .q-badge):is(.bg-positive, .bg-negative, .bg-warning, .bg-info, .bg-secondary,
+                                           .bg-accent) { color: var(--escriba-bg) !important; }
+  .q-btn-toggle { background: var(--escriba-card) !important; color: var(--escriba-text) !important; }
+}
 .escriba-player { display: inline-flex; align-items: center; gap: 8px; min-width: 12rem; }
 .escriba-player button { border: 0; border-radius: 999px; width: 30px; height: 30px; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--q-primary); color: white; flex: none; }
-body.body--dark .escriba-player button { color: #1e1b4b; }
+  background: var(--q-primary); color: var(--escriba-on-primary); flex: none; }
 .escriba-player .track { flex: 1; height: 6px; border-radius: 3px; background: var(--escriba-line);
   cursor: pointer; overflow: hidden; min-width: 5rem; }
 .escriba-player .bar { height: 100%; width: 0; background: var(--q-primary); border-radius: 3px; }
@@ -144,8 +147,9 @@ def frame(current_path):
     from . import record as record_page
 
     ui.page_title("Escriba")
-    ui.dark_mode(THEMES.get(config.load_state().get("theme")))
-    ui.add_css(CSS)
+    state = config.load_state()
+    ui.dark_mode(THEMES.get(state.get("theme")))
+    ui.add_css(themes.css(state.get("colors")) + CSS)
     ui.add_head_html(PLAYER_JS)
     project = current_project()
     with ui.header().classes("escriba-header items-center flex-nowrap gap-1 px-4 py-2 shadow-md"):

@@ -28,7 +28,7 @@ escriba graba la llamada y tu micrófono, los transcribe en la nube o en tu PC y
 - **Identificación de hablantes** por la voz, con una biblioteca de voces por proyecto.
 - **Revisión** de cada hablante con frases y audio de muestra, para confirmar o corregir quién es.
 - **Archivado** de las reuniones revisadas en Opus, unas 15 veces más pequeñas.
-- **Interfaz en el navegador y menú de terminal**, en castellano e inglés.
+- **Interfaz en el navegador y menú de terminal**, en castellano e inglés, con temas de color (Gruvbox, Tokyo Night, Catppuccin, Dracula, Nord...).
 
 ## Nube o local
 
@@ -45,7 +45,7 @@ Los hablantes se identifican siempre en tu PC, en los dos modos.
 
 ### Windows
 
-Descarga el repositorio y ejecuta `install.ps1` (clic derecho > *Ejecutar con PowerShell*). Se instala en tu carpeta de usuario, no necesita permisos de administrador y crea un acceso directo *Escriba*.
+Descarga la última versión de [Releases](https://github.com/Carlolius/escriba/releases) (*Source code (zip)*), descomprímela y ejecuta `install.ps1` (clic derecho > *Ejecutar con PowerShell*). Se instala en tu carpeta de usuario, no necesita permisos de administrador y crea un acceso directo *Escriba*.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1           # nube
@@ -57,7 +57,7 @@ Para actualizar, cierra escriba y ejecuta el `install.ps1` de la versión nueva.
 
 ### Linux
 
-Necesita [`uv`](https://docs.astral.sh/uv/) y `libpulse`.
+Necesita [`uv`](https://docs.astral.sh/uv/) y `libpulse`. Desde la carpeta de la [última versión](https://github.com/Carlolius/escriba/releases):
 
 ```bash
 uv tool install --python 3.11 "escriba @ file://$PWD"

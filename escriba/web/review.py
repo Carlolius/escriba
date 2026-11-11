@@ -132,7 +132,7 @@ def _card(spk, info, quotes, known, decide):
             if reviewed:
                 ui.badge(_("reviewed"), color="positive")
             elif unnamed:
-                ui.badge(_("not identified"), color="orange")
+                ui.badge(_("not identified"), color="warning")
             ui.space()
             sim = info.get("similarity")
             detail = _("{seconds:.0f} s of speech", seconds=info["speech_seconds"])

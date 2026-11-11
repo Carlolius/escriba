@@ -28,7 +28,7 @@ escriba records the call and your microphone, transcribes them in the cloud or o
 - **Speaker identification** by voice, with a separate voice library per project.
 - **Review** of each speaker with sample sentences and audio, so you can confirm or correct who it is.
 - **Archiving** of reviewed meetings as Opus, about 15x smaller.
-- **Browser interface and terminal menu**, in English and Spanish.
+- **Browser interface and terminal menu**, in English and Spanish, with color themes (Gruvbox, Tokyo Night, Catppuccin, Dracula, Nord...).
 
 ## Cloud or local
 
@@ -45,7 +45,7 @@ Speakers are always identified on your PC, in both modes.
 
 ### Windows
 
-Download the repository and run `install.ps1` (right-click > *Run with PowerShell*). It installs into your user folder, needs no admin rights and creates an *Escriba* shortcut.
+Download the latest version from [Releases](https://github.com/Carlolius/escriba/releases) (*Source code (zip)*), unzip it and run `install.ps1` (right-click > *Run with PowerShell*). It installs into your user folder, needs no admin rights and creates an *Escriba* shortcut.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1           # cloud
@@ -53,11 +53,11 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Local    # cloud + local
 powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 ```
 
-To update, close escriba and run the new version's `install.ps1`.
+To update, close escriba and run the `install.ps1` of the new version.
 
 ### Linux
 
-Requires [`uv`](https://docs.astral.sh/uv/) and `libpulse`.
+Requires [`uv`](https://docs.astral.sh/uv/) and `libpulse`. From the folder of the [latest version](https://github.com/Carlolius/escriba/releases):
 
 ```bash
 uv tool install --python 3.11 "escriba @ file://$PWD"

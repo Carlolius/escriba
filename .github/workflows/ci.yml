@@ -69,3 +69,13 @@ jobs:
         run: |
           powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall -NoPause
           if (Test-Path (Join-Path $env:USERPROFILE '.local\bin\escriba.exe')) { throw 'Still installed' }
+      - name: Install the latest release (install.ps1 on its own, as downloaded)
+        shell: powershell
+        run: |
+          $dir = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP 'alone')
+          Copy-Item install.ps1 $dir
+          powershell -ExecutionPolicy Bypass -File (Join-Path $dir 'install.ps1') -NoPause
+          if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
+          & (Join-Path $env:USERPROFILE '.local\bin\escriba.exe') data
+          if ($LASTEXITCODE -ne 0) { throw 'escriba data failed' }
+          powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall -NoPause

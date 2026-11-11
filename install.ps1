@@ -24,7 +24,8 @@
 
 .PARAMETER Source
     Where to get Escriba from: a folder with the code or the URL of a .zip.
-    By default, this script's folder if it holds the code; otherwise, GitHub.
+    By default, this script's folder if it holds the code; otherwise, the
+    latest release on GitHub.
 
 .PARAMETER Uninstall
     Removes Escriba and its shortcuts. Your data stays.
@@ -51,7 +52,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$GitHubZip = 'https://github.com/Carlolius/escriba/archive/refs/heads/main.zip'
+$Repo = 'Carlolius/escriba'
 $PythonVersion = '3.11'
 $Spanish = (Get-UICulture).TwoLetterISOLanguageName -eq 'es'
 
@@ -113,7 +114,13 @@ if (-not $Source) {
     if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot 'pyproject.toml'))) {
         $Source = $PSScriptRoot
     } else {
-        $Source = $GitHubZip
+        # The latest release, not main: what's on main may not be tested yet
+        try {
+            $tag = (Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing).tag_name
+        } catch {
+            Fail (T "Can't find the latest version on GitHub ($_). Download it from https://github.com/$Repo/releases and run its install.ps1." "No encuentro la última versión en GitHub ($_). Descárgala de https://github.com/$Repo/releases y ejecuta su install.ps1.")
+        }
+        $Source = "https://github.com/$Repo/archive/refs/tags/$tag.zip"
     }
 }
 if (Test-Path $Source) {
@@ -168,8 +175,8 @@ if ($Spanish) {
 - Si al grabar el micrófono no recoge nada: Configuración de Windows >
   Privacidad y seguridad > Micrófono > "Permitir que las aplicaciones de
   escritorio accedan al micrófono".
-- Para actualizar, descarga la versión nueva y ejecuta su install.ps1 (o
-  este con -Source y la URL del .zip de GitHub).
+- Para actualizar, descarga la última versión de
+  https://github.com/Carlolius/escriba/releases y ejecuta su install.ps1.
 "@
 } else {
     Write-Host @"
@@ -179,8 +186,8 @@ if ($Spanish) {
 - The first time, go to Settings and paste your AssemblyAI key.
 - If the microphone records nothing: Windows Settings > Privacy & security >
   Microphone > "Let desktop apps access your microphone".
-- To update, download the new version and run its install.ps1 (or this one
-  with -Source and the URL of the GitHub .zip).
+- To update, download the latest version from
+  https://github.com/Carlolius/escriba/releases and run its install.ps1.
 "@
 }
 Wait-Enter

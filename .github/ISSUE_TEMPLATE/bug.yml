@@ -1,0 +1,42 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never attach meeting recordings, transcripts or voice library files.** They contain other people's voices and personal data. If a bug needs audio to reproduce, record a short clip of yourself.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message
+      description: Any error from the terminal window or the web interface.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: escriba version
+      placeholder: v0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 11, Windows 10, Linux]
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Transcription mode
+      options: [Cloud, Local (CPU), Local (NVIDIA GPU), Not related to transcription]
+    validations:
+      required: true

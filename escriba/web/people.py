@@ -93,7 +93,7 @@ def page():
 
     def _finding_card(p, f, data):
         color = "negative" if f["kind"] == "confusion" and f["similarity"] >= voiceprints.DEFAULT_THRESHOLD \
-            else "orange"
+            else "warning"
         with ui.card().classes("w-full gap-3"):
             with ui.row().classes("w-full items-center gap-2"):
                 ui.badge(_(KIND[f["kind"]]), color=color)

@@ -14,13 +14,12 @@ from .common import choose_path, frame, no_project, project_dir, shown_path, tit
 STATE = {"recording": None, "project": None, "last": None}
 
 HISTORY = 64          # bars in each meter: 64 x 0.2 s = the last ~13 seconds
-CHANNELS = (("system", "headphones", "#818cf8"), ("mic", "mic", "#fbbf24"))
+CHANNELS = (("system", "headphones", "var(--escriba-system)"), ("mic", "mic", "var(--escriba-mic)"))
 METER_CSS = """
-.escriba-rec { background: radial-gradient(120% 140% at 0% 0%, #2a2a5a 0%, #14152c 55%, #0d0e1f 100%) !important;
-  color: white; }
-.escriba-rec .soft { color: #a5a9cf; }
+.escriba-rec { background: var(--escriba-stage) !important; color: var(--escriba-stage-text) !important; }
+.escriba-rec .soft { color: var(--escriba-stage-soft); }
 .meter-row { display: flex; align-items: center; gap: 12px; }
-.meter-name { width: 9.5rem; display: flex; align-items: center; gap: 6px; font-size: 13px; color: #c7cbef; }
+.meter-name { width: 9.5rem; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--escriba-stage-text); }
 .meter-row svg { flex: 1; height: 52px; min-width: 0; }
 .meter-db { width: 4.2rem; text-align: right; font: 600 13px ui-monospace, monospace; }
 @media (max-width: 640px) { .meter-name span { display: none; } .meter-name { width: auto; } }
@@ -48,11 +47,11 @@ def meters_html(history, rms, names):
         for i, level in enumerate(levels):
             h = max(2.0, level * 48)
             opacity = 0.25 + 0.75 * (i + 1) / HISTORY
-            fill = color if level > 0.25 else "#4b4f7a"
+            fill = color if level > 0.25 else "var(--escriba-stage-line)"
             bars.append(f'<rect x="{i * 5}" y="{26 - h / 2:.1f}" width="3" height="{h:.1f}" rx="1.5" '
-                        f'fill="{fill}" fill-opacity="{opacity:.2f}"/>')
+                        f'style="fill:{fill}" fill-opacity="{opacity:.2f}"/>')
         current = levels[-1]
-        db_color = color if current > 0.25 else "#6b6f99"
+        db_color = color if current > 0.25 else "var(--escriba-stage-soft)"
         rows.append(
             f'<div class="meter-row"><div class="meter-name">'
             f'<i class="q-icon notranslate material-icons" style="font-size:20px;color:{color}">{icon}</i>'

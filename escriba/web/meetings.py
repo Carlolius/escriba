@@ -10,7 +10,7 @@ STATUS = {  # text, color, icon
     "recording": (N_("Recording"), "negative", "fiber_manual_record"),
     "transcribing": (N_("Transcribing"), "primary", "autorenew"),
     "untranscribed": (N_("Not transcribed"), "grey-7", "hourglass_empty"),
-    "to_review": (N_("Speakers to review"), "orange", "record_voice_over"),
+    "to_review": (N_("Speakers to review"), "warning", "record_voice_over"),
     "reviewed": (N_("Reviewed"), "positive", "task_alt"),
 }
 FILTERS = {"all": N_("All"), "untranscribed": N_("Not transcribed"), "to_review": N_("To review"),
