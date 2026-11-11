@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pruebas:
+    name: Pruebas (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Instalar
+        shell: bash
+        run: |
+          echo webrtcvad > excluir.txt
+          uv venv --python 3.11 .venv
+          uv pip install --torch-backend cpu --excludes excluir.txt -e . pytest
+      - name: Pruebas
+        shell: bash
+        run: uv run --no-sync python -m pytest -v
+
+  instalador-windows:
+    name: Instalador de Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ejecutar instalar.ps1
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File instalar.ps1 -SinPausa
+      - name: Comprobar lo instalado
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:USERPROFILE '.local\bin\escriba.exe'
+          if (-not (Test-Path $exe)) { throw "Falta $exe" }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Escriba.lnk'
+          if (-not (Test-Path $lnk)) { throw "Falta el acceso directo $lnk" }
+          & $exe datos
+          if ($LASTEXITCODE -ne 0) { throw 'escriba datos falló' }
+          $web = Start-Process $exe -ArgumentList 'web', '--no-abrir' -PassThru
+          $ok = $false
+          foreach ($i in 1..60) {
+            Start-Sleep -Seconds 2
+            try { if ((Invoke-WebRequest 'http://127.0.0.1:8765/ajustes' -UseBasicParsing).StatusCode -eq 200) { $ok = $true; break } } catch {}
+          }
+          Stop-Process $web.Id -Force
+          if (-not $ok) { throw 'La web no respondió' }
+      - name: Desinstalar
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File instalar.ps1 -Desinstalar -SinPausa
+          if (Test-Path (Join-Path $env:USERPROFILE '.local\bin\escriba.exe')) { throw 'Sigue instalado' }

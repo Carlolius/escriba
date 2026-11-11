@@ -1,0 +1,10 @@
+# Entornos virtuales
+transcribe-venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
