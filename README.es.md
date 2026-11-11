@@ -30,6 +30,7 @@ Descarga este repositorio (o el .zip, descomprimido) y haz clic derecho en `inst
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1           # solo nube
 powershell -ExecutionPolicy Bypass -File install.ps1 -Local    # nube + local
+powershell -ExecutionPolicy Bypass -File install.ps1 -Gpu      # nube + local con tarjeta NVIDIA (experimental)
 ```
 
 Qué hace, paso a paso:
@@ -126,6 +127,15 @@ Después, una sola vez:
 3. Pega el token en *Ajustes* (`HF_TOKEN`)
 
 Siempre funciona con prioridad baja, así que el PC sigue fluido mientras trabaja.
+
+### GPU NVIDIA (experimental)
+
+Con una tarjeta NVIDIA, el modo local puede usarla: transcribir y separar hablantes pasa de más de una hora por hora de audio a unos minutos. Al instalar el modo local, escriba ofrece la versión para GPU si encuentra una tarjeta (`nvidia-smi`); si el modo local ya está instalado para CPU, en *Ajustes* hay un botón para cambiar. Por línea de órdenes: `escriba install-local --gpu`, o `install.ps1 -Gpu` en Windows.
+
+- **Es experimental:** los autores no tienen tarjeta NVIDIA y el CI no tiene GPU, así que aún no se ha probado en una de verdad. Si lo pruebas, cuenta cómo ha ido.
+- **Nunca empeora las cosas:** si la GPU falla (driver antiguo, poca memoria, una librería que falta), escriba lo indica en el registro y sigue con la CPU. *Ajustes* > *Solo CPU*, o `escriba transcribe --local --cpu`, la desactiva.
+- **Requisitos:** driver de NVIDIA 528 o posterior en Windows, 525 o posterior en Linux. Las tarjetas AMD e Intel no son compatibles (faster-whisper solo funciona con CUDA).
+- **Tamaño:** ~5 GB en vez de ~1,5 GB. torch se instala para CUDA 12.6, no 13: el motor de faster-whisper (CTranslate2 4.x) necesita cuBLAS 12 y cuDNN 9, que vienen con ese torch.
 
 ### Rendimiento (Ryzen 5 5625U, solo CPU)
 

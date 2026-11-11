@@ -4,7 +4,7 @@ from collections import deque
 
 from nicegui import background_tasks, run, ui
 
-from .. import config, extras, i18n, record
+from .. import config, extras, gpu, i18n, record
 from ..i18n import N_, _, number
 from ..transcribe import local_available
 from .common import THEMES, frame, title
@@ -104,7 +104,7 @@ def page():
     shown = {"key": None, "log": None}
 
     def draw_local_mode():
-        key = (local_available(), INSTALL["running"], INSTALL["ok"])
+        key = (local_available(), gpu.torch_has_cuda(), INSTALL["running"], INSTALL["ok"])
         if key != shown["key"]:  # redrawn only when the state changes, so nothing blinks
             shown["key"] = key
             local_mode.clear()
@@ -129,7 +129,16 @@ def _whisper_sizes():
 
 def _local_mode():
     """Draws the card's content; returns the log label to keep updating, if any."""
-    if local_available():
+    card = gpu.nvidia()
+    usable_card = bool(card and card["driver_ok"])
+    installed = local_available()
+    if INSTALL["running"]:
+        with ui.row().classes("items-center gap-3"):
+            ui.spinner(size="md")
+            ui.label(_("Installing... it may take a few minutes. You can keep using escriba."))
+        return _install_log()
+
+    if installed:
         with ui.row().classes("items-center gap-2"):
             ui.icon("check_circle", color="positive")
             ui.label(_("Installed."))
@@ -138,32 +147,65 @@ def _local_mode():
         if not config.read_secret("HF_TOKEN"):
             ui.label(_("To separate speakers it also needs the Hugging Face token (above).")) \
                 .classes("text-sm text-warning")
-        return None
-    ui.label(_("Free and the audio never leaves the PC, but slower than the cloud. It's optional: it needs "
-               "~{size} GB of libraries, and then the whisper model the first time ({sizes}).",
-               size=number(extras.SIZE_GB), sizes=_whisper_sizes())).classes("text-sm soft-text")
-    if INSTALL["running"]:
-        with ui.row().classes("items-center gap-3"):
-            ui.spinner(size="md")
-            ui.label(_("Installing... it may take a few minutes. You can keep using escriba."))
-        return _install_log()
+    else:
+        ui.label(_("Free and the audio never leaves the PC, but slower than the cloud. It's optional: it needs "
+                   "~{size} GB of libraries, and then the whisper model the first time ({sizes}).",
+                   size=number(extras.SIZE_GB), sizes=_whisper_sizes())).classes("text-sm soft-text")
+
     log = None
     if INSTALL["ok"] is False:
         ui.label(_("The installation failed. You can also install it by hand:")).classes("text-negative")
         ui.code(extras.manual_command(), language=None).classes("w-full")
         log = _install_log()
+
+    with_gpu = None
+    if card:
+        with ui.column().classes("w-full gap-1 mt-1"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("memory", color="primary")
+                ui.label(_("Graphics card: {name}", name=card["name"])).classes("font-medium")
+                ui.badge(_("experimental"), color="orange").props("rounded outline")
+            if not card["driver_ok"]:
+                ui.label(_("Its driver ({driver}) is too old to use it: update it to use the GPU.",
+                           driver=card["driver"])).classes("text-sm text-warning")
+            elif installed and gpu.torch_has_cuda():
+                ui.toggle({"auto": _("Use the GPU"), "never": _("CPU only")}, value=gpu.setting(),
+                          on_change=lambda e: _save_gpu(e.value))
+                ui.label(_("If the GPU fails (old driver, too little memory), it goes on with the CPU and says so "
+                           "in the log.")).classes("text-sm soft-text")
+            elif installed:
+                ui.label(_("Local mode is installed for the CPU. The GPU version is much faster, but takes "
+                           "~{size} GB.", size=number(extras.GPU_SIZE_GB))).classes("text-sm soft-text")
+            else:
+                with_gpu = ui.checkbox(_("Install the GPU version (~{size} GB instead of {cpu}). If it fails, the "
+                                         "CPU is used.", size=number(extras.GPU_SIZE_GB),
+                                         cpu=number(extras.SIZE_GB)), value=True)
+
+    switch = installed and usable_card and not gpu.torch_has_cuda()
+    if installed and not switch:
+        return log
     if not extras.find_uv():
         ui.label(_("uv was not found, so it can't be installed from here. Install it by hand:")) \
             .classes("text-warning")
         ui.code(extras.manual_command(), language=None).classes("w-full")
         return log
     free = extras.free_gb()
-    if free < extras.NEEDED_GB:
-        ui.label(_("Only {free} GB free on the disk: about {needed} GB are needed.",
-                   free=number(free), needed=extras.NEEDED_GB)).classes("text-warning")
-    ui.button(_("Install (~{size} GB)", size=number(extras.SIZE_GB)), icon="download",
-              on_click=_start_install).props("unelevated").classes("self-start")
+    if free < (extras.GPU_NEEDED_GB if usable_card else extras.NEEDED_GB):
+        ui.label(_("Only {free} GB free on the disk: about {needed} GB are needed.", free=number(free),
+                   needed=extras.GPU_NEEDED_GB if usable_card else extras.NEEDED_GB)).classes("text-warning")
+    if switch:
+        ui.button(_("Switch to the GPU version (~{size} GB)", size=number(extras.GPU_SIZE_GB)), icon="download",
+                  on_click=lambda: _start_install(True)).props("unelevated").classes("self-start")
+    else:
+        ui.button(_("Install"), icon="download",
+                  on_click=lambda: _start_install(bool(with_gpu and with_gpu.value))) \
+            .props("unelevated").classes("self-start")
     return log
+
+
+def _save_gpu(value):
+    config.update_state(gpu=value)
+    ui.notify(_("Saved: it will be used for the next transcription"), type="positive")
 
 
 def _log_text():
@@ -175,15 +217,18 @@ def _install_log():
         return ui.label(_log_text()).classes("w-full whitespace-pre-wrap font-mono text-xs max-h-72 overflow-auto")
 
 
-def _start_install():
+def _start_install(with_gpu=False):
     if INSTALL["running"]:
+        return
+    if with_gpu and extras.local_job_running():
+        ui.notify(_("A local transcription is running: wait until it ends."), type="warning")
         return
     INSTALL.update(running=True, ok=None)
     INSTALL["lines"].clear()
 
     async def work():
         try:
-            INSTALL["ok"] = await run.io_bound(extras.install, INSTALL["lines"].append)
+            INSTALL["ok"] = await run.io_bound(extras.install, INSTALL["lines"].append, with_gpu)
         except Exception as e:
             INSTALL["lines"].append(str(e))
             INSTALL["ok"] = False

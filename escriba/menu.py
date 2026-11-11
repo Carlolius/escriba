@@ -88,21 +88,33 @@ def choose_audio(project):
 def install_local_mode():
     """Offers to install local mode (faster-whisper + pyannote). True if it's
     installed afterwards."""
-    from . import extras
+    from . import extras, gpu
 
     console.print(_("Local mode is not installed: it needs ~{size} GB of libraries, and then the whisper model "
                     "the first time it's used.", size=number(extras.SIZE_GB)))
+    use_gpu = False
+    card = gpu.nvidia()
+    if card and card["driver_ok"]:
+        use_gpu = questionary.confirm(
+            _("Install the version for your NVIDIA card ({name})? Experimental, ~{size} GB; if it fails, the CPU "
+              "is used.", name=card["name"], size=number(extras.GPU_SIZE_GB)), default=True).ask()
+        if use_gpu is None:
+            return False
+    elif card:
+        console.print(_("Your NVIDIA driver ({driver}) is too old to use the GPU: installing the CPU version.",
+                        driver=card["driver"]))
     if not extras.find_uv():
         console.print(_("uv was not found, so it can't be installed from here. Install it by hand:"))
         console.print("  " + escape(extras.manual_command()))
         return False
     free = extras.free_gb()
-    if free < extras.NEEDED_GB:
+    needed = extras.GPU_NEEDED_GB if use_gpu else extras.NEEDED_GB
+    if free < needed:
         console.print(_("[yellow]Only {free} GB free on the disk: about {needed} GB are needed.[/yellow]",
-                        free=number(free), needed=extras.NEEDED_GB))
+                        free=number(free), needed=needed))
     if not questionary.confirm(_("Install it now?"), default=False).ask():
         return False
-    if extras.install(lambda line: console.print(escape(line), style="dim", highlight=False)):
+    if extras.install(lambda line: console.print(escape(line), style="dim", highlight=False), gpu=use_gpu):
         console.print(_("[green]Local mode installed.[/green]"))
         return True
     console.print(_("[red]The installation failed.[/red] You can also install it by hand:"))
@@ -112,12 +124,18 @@ def install_local_mode():
 
 def choose_engine_language():
     """Returns (engine, model, language) or None."""
+    from . import gpu
+
+    if local_available() and gpu.will_try():
+        local_text = _("Locally: free and the audio never leaves the PC; with the GPU ({name}, experimental)",
+                       name=gpu.describe())
+    else:
+        local_text = _("Locally: free and the audio never leaves the PC, but ~1 h 15 min per hour of audio")
     engine = _select(
         _("Where to transcribe?"),
         choices=[
             _choice(_("In the cloud (AssemblyAI): a few minutes, ~$0.23 per hour of audio"), "cloud"),
-            _choice(_("Locally: free and the audio never leaves the PC, but ~1 h 15 min per hour of audio"),
-                    "local"),
+            _choice(local_text, "local"),
         ],
         default="cloud",
     ).ask()

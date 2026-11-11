@@ -30,6 +30,7 @@ Download this repository (or the .zip, unzipped), then right-click `install.ps1`
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1           # cloud only
 powershell -ExecutionPolicy Bypass -File install.ps1 -Local    # cloud + local
+powershell -ExecutionPolicy Bypass -File install.ps1 -Gpu      # cloud + local on an NVIDIA card (experimental)
 ```
 
 What it does, step by step:
@@ -127,6 +128,15 @@ Then, once:
 
 It always runs at low priority, so your PC stays responsive while it works.
 
+### NVIDIA GPU (experimental)
+
+With an NVIDIA card, local mode can use it: transcription and diarization go from more than an hour per hour of audio to a few minutes. When installing local mode, escriba offers the GPU version if it finds a card (`nvidia-smi`); if local mode is already installed for the CPU, *Settings* has a button to switch. From the command line: `escriba install-local --gpu`, or `install.ps1 -Gpu` on Windows.
+
+- **It's experimental:** the authors have no NVIDIA card and CI has no GPU, so it hasn't run on real hardware yet. If you try it, please report how it went.
+- **It never makes things worse:** if the GPU fails (driver too old, too little memory, a missing library), escriba says so in the log and goes on with the CPU. *Settings* > *CPU only*, or `escriba transcribe --local --cpu`, turns it off.
+- **Requirements:** NVIDIA driver 528 or newer on Windows, 525 or newer on Linux. AMD and Intel cards aren't supported (faster-whisper only runs on CUDA).
+- **Size:** ~5 GB instead of ~1.5 GB. torch is installed for CUDA 12.6, not 13: faster-whisper's engine (CTranslate2 4.x) needs cuBLAS 12 and cuDNN 9, which come with that torch.
+
 ### Performance (Ryzen 5 5625U, CPU only)
 
 Measured on 5 minutes of a real meeting (Oct 2026):
@@ -167,7 +177,7 @@ CI runs the tests on Ubuntu and Windows, and runs `install.ps1` end to end on Wi
 | `i18n.py`, `locales/` | interface language and translations |
 | `record.py` | recording (soundcard) |
 | `transcribe.py` | picks the engine, low priority |
-| `extras.py` | installs local mode afterwards |
+| `extras.py` / `gpu.py` | installs local mode afterwards / NVIDIA GPU, with CPU fallback |
 | `cloud.py` / `local.py` | AssemblyAI / faster-whisper + pyannote |
 | `speakers.py` | identify voices, write the .txt and .speakers.json |
 | `review.py` | review decisions, feed the library |

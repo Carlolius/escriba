@@ -370,8 +370,11 @@ async def confirm(question):
 async def transcribe_dialog(audio, project):
     """Asks engine/language/model and starts the transcription in the
     background. Returns True if it started."""
+    from .. import gpu
+
     local = local_available()
     dur = await run.io_bound(audio_util.duration, audio)
+    on_gpu = local and await run.io_bound(gpu.will_try)
     with ui.dialog() as dialog, ui.card().classes("w-[30rem] max-w-full gap-3"):
         ui.label(Path(audio).name).classes("text-lg font-medium break-all")
         if dur:
@@ -392,6 +395,9 @@ async def transcribe_dialog(audio, project):
         if engine.value == "cloud":
             text = _("AssemblyAI: a few minutes, ~$0.23 per hour of audio. The audio leaves the PC and is deleted "
                      "there when done.")
+        elif on_gpu:
+            text = _("Free and the audio never leaves the PC. It will use the GPU ({name}, experimental): much "
+                     "faster than the CPU, and if it fails it goes on with the CPU.", name=gpu.describe())
         elif dur:
             text = _("Free and the audio never leaves the PC, but slow (~{time} for this audio).",
                      time=jobs.format_minutes(dur * jobs.PROCESS_FACTOR))

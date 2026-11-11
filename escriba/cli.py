@@ -1,5 +1,6 @@
 """escriba's command line. Without arguments it opens the terminal menu."""
 import argparse
+import os
 import sys
 import time
 import warnings
@@ -67,6 +68,8 @@ def cmd_record(a):
 def cmd_transcribe(a):
     from . import transcribe
 
+    if a.cpu:
+        os.environ["ESCRIBA_GPU"] = "never"
     speakers = [s.strip() for s in a.speakers.split(",") if s.strip()]
     diarize = a.diarize or bool(a.project) or bool(speakers)
     try:
@@ -133,17 +136,27 @@ def cmd_repair(a):
 
 
 def cmd_install_local(a):
-    from . import extras
+    from . import extras, gpu
     from .transcribe import local_available
 
-    if local_available():
+    card = gpu.nvidia()
+    use_gpu = a.gpu or (not a.cpu and bool(card and card["driver_ok"]))
+    if a.gpu and not card:
+        sys.exit(_("No NVIDIA card found (nvidia-smi doesn't answer)."))
+    if local_available() and (not use_gpu or gpu.torch_has_cuda()):
         print(_("Local mode is already installed."))
         return
     if not extras.find_uv():
         sys.exit(_("uv was not found, so it can't be installed from here. Install it by hand:") + "\n  "
                  + extras.manual_command())
-    print(_("Installing local mode (~{size} GB)...", size=number(extras.SIZE_GB)), flush=True)
-    if not extras.install(lambda line: print(line, flush=True)):
+    if use_gpu and extras.local_job_running():
+        sys.exit(_("A local transcription is running: wait until it ends."))
+    if use_gpu:
+        print(_("Installing local mode for the GPU {name} (experimental, ~{size} GB)...",
+                name=card["name"] if card else "CUDA", size=number(extras.GPU_SIZE_GB)), flush=True)
+    else:
+        print(_("Installing local mode (~{size} GB)...", size=number(extras.SIZE_GB)), flush=True)
+    if not extras.install(lambda line: print(line, flush=True), gpu=use_gpu):
         sys.exit(_("The installation failed. You can also install it by hand:") + "\n  " + extras.manual_command())
     print(_("Local mode installed."))
 
@@ -208,6 +221,7 @@ def parser():
     t.add_argument("--project", default="", help=_("identify speakers by voice with this project's library"))
     t.add_argument("--speakers", default="", help=_('"A,B": names in order of appearance for unrecognised voices'))
     t.add_argument("--prompt", default=None, help=_("local only: initial prompt (default: the glossary)"))
+    t.add_argument("--cpu", action="store_true", help=_("local only: don't use the GPU even if there is one"))
     t.set_defaults(func=cmd_transcribe)
 
     ar = command("archive", help=_("compress what's already reviewed to Opus"),
@@ -242,6 +256,10 @@ def parser():
     il = command("install-local", help=_("install local mode (transcribe on this PC)"),
                  description=_("Adds faster-whisper and pyannote (~1.5 GB) to escriba's environment. Whisper's "
                                "models are downloaded the first time each one is used."))
+    device = il.add_mutually_exclusive_group()
+    device.add_argument("--gpu", action="store_true",
+                        help=_("version for NVIDIA cards (experimental, ~5 GB); also switches an installed CPU one"))
+    device.add_argument("--cpu", action="store_true", help=_("CPU version even with an NVIDIA card"))
     il.set_defaults(func=cmd_install_local)
 
     d = command("data", help=_("where your data is and which keys are set"))

@@ -18,6 +18,10 @@
     more. It can also be added later from Escriba (Settings), and an update
     keeps it if it's there. Without it, cloud only.
 
+.PARAMETER Gpu
+    Local mode for NVIDIA cards (experimental): torch for CUDA 12, ~5 GB
+    instead of ~1.5. Implies -Local. If the GPU fails, the CPU is used.
+
 .PARAMETER Source
     Where to get Escriba from: a folder with the code or the URL of a .zip.
     By default, this script's folder if it holds the code; otherwise, GitHub.
@@ -33,11 +37,14 @@
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File install.ps1 -Local
 .EXAMPLE
+    powershell -ExecutionPolicy Bypass -File install.ps1 -Gpu
+.EXAMPLE
     powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 #>
 [CmdletBinding()]
 param(
     [switch]$Local,
+    [switch]$Gpu,
     [string]$Source,
     [switch]$Uninstall,
     [switch]$NoPause
@@ -96,17 +103,25 @@ if (Test-Path $Source) {
 }
 # Local mode may have been added later from escriba itself (Settings or
 # `escriba install-local`): keep it when updating
-$installed = Join-Path (uv tool dir).Trim() 'escriba\Lib\site-packages\faster_whisper'
-if (-not $Local -and (Test-Path $installed)) {
+$sitePackages = Join-Path (uv tool dir).Trim() 'escriba\Lib\site-packages'
+if (-not $Local -and (Test-Path (Join-Path $sitePackages 'faster_whisper'))) {
     $Local = $true
     Write-Host (T 'Local mode is installed: it is kept.' 'El modo local está instalado: se mantiene.')
 }
+if (-not $Gpu -and (Test-Path (Join-Path $sitePackages 'torch\lib\torch_cuda.dll'))) {
+    $Gpu = $true
+    Write-Host (T 'The GPU version is installed: it is kept.' 'La versión para GPU está instalada: se mantiene.')
+}
+if ($Gpu) { $Local = $true }
+# CUDA 12.6: faster-whisper's engine (CTranslate2 4.x) doesn't work with CUDA 13
+$torchBackend = if ($Gpu) { 'cu126' } else { 'cpu' }
 $extra = if ($Local) { '[local]' } else { '' }
 $package = "escriba$extra @ $Source"
 
 Step "$(T 'Installing Escriba from' 'Instalando Escriba desde') $Source"
-if ($Local) { Write-Host (T 'With local mode: several GB, it may take a good while.' 'Con el modo local: son varios GB, puede tardar un buen rato.') }
-uv tool install --force --python $PythonVersion `
+if ($Gpu) { Write-Host (T 'With local mode for the GPU (experimental): ~5 GB, it may take a good while.' 'Con el modo local para GPU (experimental): ~5 GB, puede tardar un buen rato.') }
+elseif ($Local) { Write-Host (T 'With local mode: ~1.5 GB, it may take a while.' 'Con el modo local: ~1,5 GB, puede tardar un rato.') }
+uv tool install --force --python $PythonVersion --torch-backend $torchBackend `
     --reinstall-package escriba --refresh-package escriba $package
 if ($LASTEXITCODE -ne 0) { Fail (T "The installation with uv didn't finish well (see the messages above)." 'La instalación con uv no terminó bien (mira los mensajes de arriba).') }
 

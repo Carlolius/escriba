@@ -38,5 +38,6 @@ def test_install_pins_what_is_installed(monkeypatch):
 def test_numbers_in_the_interface_language():
     i18n.set_language("es")
     assert i18n.number(1.5) == "1,5"
+    assert i18n.number(3) == "3"
     i18n.set_language("en")
     assert i18n.number(1.5) == "1.5"

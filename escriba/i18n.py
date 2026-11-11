@@ -75,6 +75,8 @@ DECIMAL_COMMA = {"es"}
 def number(x, digits=1):
     """A decimal number as written in the interface language: 1.5 / 1,5."""
     text = f"{x:.{digits}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")  # 3.0 -> 3
     return text.replace(".", ",") if language() in DECIMAL_COMMA else text
 
 
