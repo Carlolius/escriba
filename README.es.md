@@ -2,169 +2,85 @@
 
 *[Read in English](README.md)*
 
-Graba, transcribe e identifica quién habla en tus reuniones, en Windows y Linux.
+Graba, transcribe e identifica a quién habla en tus reuniones, en Windows y Linux.
 
-- **Grabar:** mezcla lo que suena en el PC (la gente de la llamada) con tu micrófono en un WAV mono de 16 kHz. WASAPI en Windows, PipeWire/PulseAudio en Linux. No hace falta ffmpeg.
-- **Transcribir:** en la nube con AssemblyAI (unos minutos, ~0,23 $ por hora de audio) o en tu PC con faster-whisper + pyannote (gratis, pero ~1 h 15 min por hora de audio sin tarjeta NVIDIA).
-- **Identificar hablantes:** por la voz, contra una librería de voces de cada proyecto que aprende cada vez que revisas una transcripción. Siempre se hace en tu PC, también en modo nube.
-- **Archivar:** cuando una reunión está revisada, su WAV se comprime a Opus (~15 veces menos).
+- **Graba** el audio de la llamada y tu micrófono juntos, sin programas adicionales.
+- **Transcribe** en la nube con AssemblyAI (~0,23 $ por hora de audio) o en local con faster-whisper y pyannote.
+- **Identifica a los hablantes** por la voz, con una biblioteca por proyecto que mejora cada vez que revisas una transcripción.
+- **Archiva** las reuniones revisadas en Opus, unas 15 veces más pequeñas.
 
-![Grabando una reunión: medidores de nivel de lo que suena y del micrófono](docs/screenshots/es/record.png)
+Interfaz en el navegador y menú de terminal, en castellano e inglés.
 
-Tiene interfaz en el navegador y menú en la terminal, los dos en **castellano e inglés**. Sigue el idioma del sistema; se cambia en *Ajustes*, en el menú de la terminal o con `escriba --lang es|en`.
+![Grabando una reunión](docs/screenshots/es/record.png)
 
-## Antes de grabar a nadie
+## Antes de grabar
 
-Grabar una reunión y guardar huellas de voz de quienes participan tiene implicaciones legales y éticas:
+Avisa a todos de que grabas; en muchos países necesitas su consentimiento. Las huellas de voz son datos biométricos (categoría especial del RGPD): guarda la biblioteca en privado y borra las muestras de una persona si te lo pide. El modo nube envía el audio a AssemblyAI (EE. UU.); usa el modo local si no debe salir de tu organización. El uso legal de escriba es responsabilidad tuya.
 
-- **Avisa a todos** de que grabas antes de empezar, y para si alguien no quiere. En muchos países necesitas su consentimiento.
-- **Las huellas de voz son datos biométricos.** En la UE, una voz identificable es un dato personal según el RGPD, y las huellas de voz que sirven para identificar a alguien son una categoría especial. Guarda la librería de voces en privado, no la compartas y borra las muestras de una persona si te lo pide.
-- **El modo nube saca el audio de tu PC** hacia AssemblyAI (EE. UU.). escriba borra de AssemblyAI la transcripción y el audio subido en cuanto tiene el resultado, pero si la reunión no puede salir de tu organización, usa el modo local.
+## Instalación
 
-Eres responsable de usar escriba de forma legal allí donde estés.
-
-## Instalar en Windows
-
-Descarga este repositorio (o el .zip, descomprimido) y haz clic derecho en `install.ps1` > **Ejecutar con PowerShell**. O, desde PowerShell en esa carpeta:
+**Windows:** descarga el repositorio y ejecuta `install.ps1` (clic derecho > *Ejecutar con PowerShell*). Lo instala todo en tu carpeta de usuario, sin permisos de administrador, y crea un acceso directo *Escriba*.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1           # solo nube
+powershell -ExecutionPolicy Bypass -File install.ps1           # nube
 powershell -ExecutionPolicy Bypass -File install.ps1 -Local    # nube + local
-powershell -ExecutionPolicy Bypass -File install.ps1 -Gpu      # nube + local con tarjeta NVIDIA (experimental)
+powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 ```
 
-Qué hace, paso a paso:
+Para actualizar, cierra escriba y ejecuta el `install.ps1` de la versión nueva.
 
-1. **Instala [`uv`](https://docs.astral.sh/uv/)** si no está, con su instalador oficial. uv es un gestor de Python: descarga la versión de Python que necesita escriba sin tocar ningún otro Python que tengas.
-2. **Instala escriba** con `uv tool install`, en un entorno propio dentro de tu carpeta de usuario (sin permisos de administrador): Python 3.11 y todas las librerías, incluidas las de audio y la interfaz web: ~150 MB en total. Con `-Local`, también faster-whisper y pyannote (~1,5 GB más); también puedes añadirlos después desde *Ajustes*.
-3. **Crea el acceso directo "Escriba"** en el escritorio y en el menú Inicio. Abre una ventana negra (déjala abierta mientras uses escriba; al cerrarla se cierra) y el navegador con la aplicación. Si escriba ya está en marcha, solo abre el navegador.
-
-Después:
-- **La primera vez:** ve a *Ajustes* y pega tu clave de AssemblyAI. Se guarda en `%LOCALAPPDATA%\escriba\secrets.env`.
-- **Si el micrófono no graba nada:** Configuración de Windows > Privacidad y seguridad > Micrófono > "Permitir que las aplicaciones de escritorio accedan al micrófono".
-- **Actualizar:** descarga la versión nueva y ejecuta su `install.ps1` (o este con `-Source <URL del .zip de GitHub>`). Cierra escriba antes. El modo local y la versión para GPU se mantienen si están instalados.
-- **Desinstalar:** `install.ps1 -Uninstall`. Quita el programa y los accesos directos; tus datos (voces, glosario, claves) se quedan en `%LOCALAPPDATA%\escriba`.
-
-El script no necesita git: si no está junto al código, descarga el .zip del repositorio desde GitHub (`-Source` para indicar otra carpeta o URL). Si Windows está en castellano, sus mensajes también.
-
-Un detalle propio de Windows del que se encarga: en modo local, pyannote recibe el audio ya cargado, porque leer los archivos por su cuenta necesitaría las DLL de FFmpeg.
-
-## Instalar en Linux
-
-Necesita [`uv`](https://docs.astral.sh/uv/) y `libpulse` (viene con PipeWire y PulseAudio).
+**Linux:** necesita [`uv`](https://docs.astral.sh/uv/) y `libpulse`.
 
 ```bash
-uv tool install --python 3.11 "escriba @ file://$PWD"     # solo nube, ~150 MB
-escriba install-local                                       # opcional: añadir el modo local
+uv tool install --python 3.11 "escriba @ file://$PWD"
+escriba install-local    # opcional: modo local
 ```
-
-`escriba install-local` (o *Ajustes* > *Transcribir en este PC*) añade faster-whisper y pyannote con el torch solo CPU, ~1,5 GB. Instalar directamente el extra `local` con `uv tool install` también funciona, pero en Linux el torch de PyPI trae soporte NVIDIA (~2 GB más) que escriba no usa.
 
 ## Uso
 
 ```bash
-escriba web        # interfaz en el navegador
-escriba            # menú en la terminal
-escriba --help     # órdenes sueltas: record, transcribe, archive, enroll, repair, install-local, data
+escriba web      # interfaz en el navegador (http://127.0.0.1:8765)
+escriba          # menú de terminal
+escriba --help   # órdenes
 ```
 
-La web y el menú de la terminal hacen lo mismo y se pueden usar a la vez. La web solo escucha en tu propio PC (`127.0.0.1:8765`), así que nadie de tu red puede entrar. Cerrar el navegador no para una grabación ni una transcripción; cerrar la ventana de la terminal sí para la grabación.
-
-Cada orden tiene su propia ayuda, p. ej. `escriba transcribe --help`. Los nombres de las órdenes están en inglés en los dos idiomas; la ayuda sale en el tuyo.
-
-En la web, el proyecto con el que trabajas se elige en la barra de arriba (escribe un nombre nuevo para crearlo); todas las páginas muestran ese proyecto. *Reuniones* lista lo grabado en su carpeta, con su estado, un reproductor y la transcripción, y permite borrar una reunión (por ejemplo una prueba) con sus archivos y, si quieres, las muestras de voz que salieron de ella. *Transcribir* muestra paso a paso las transcripciones en marcha de todos los proyectos. El menú de la terminal tiene la misma lista de *Reuniones*.
-
-Las transcripciones en segundo plano siguen aunque cierres el menú o el navegador, y su progreso (fase, %, tiempo que queda) sale arriba del menú principal y en la página *Transcribir*. Las transcripciones con hablantes por revisar aparecen en *Revisar*, con unas frases de cada uno para saber quién es sin tener que escuchar.
-
-### Capturas
-
-Hechas con datos de demostración inventados.
+La primera vez, pega tu clave de AssemblyAI en *Ajustes*.
 
 <table>
 <tr>
-<td><img src="docs/screenshots/es/meetings.png" alt="Reuniones de un proyecto y su estado"></td>
-<td><img src="docs/screenshots/es/transcribe.png" alt="Transcripciones en marcha, paso a paso"></td>
+<td><img src="docs/screenshots/es/meetings.png" alt="Reuniones"></td>
+<td><img src="docs/screenshots/es/transcribe.png" alt="Transcribir"></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/es/review.png" alt="Revisar quién es cada voz"></td>
-<td><img src="docs/screenshots/es/people.png" alt="Auditoría de la librería de voces"></td>
+<td><img src="docs/screenshots/es/review.png" alt="Revisar"></td>
+<td><img src="docs/screenshots/es/people.png" alt="Personas"></td>
 </tr>
 </table>
 
-## Tus datos
+## Modo local
 
-Las grabaciones y transcripciones se quedan en las carpetas que elijas para cada proyecto. Todo lo demás vive en tu carpeta de datos (`escriba data` te la dice):
+Opcional, unos 1,5 GB. Instálalo desde *Ajustes*, con `escriba install-local` o con `install.ps1 -Local`. Además necesita un [token de Hugging Face](https://hf.co/settings/tokens) con las condiciones de [speaker-diarization-3.1](https://hf.co/pyannote/speaker-diarization-3.1) y [speaker-diarization-community-1](https://hf.co/pyannote/speaker-diarization-community-1) aceptadas.
 
-| Sistema | Carpeta |
-|---|---|
-| Windows | `%LOCALAPPDATA%\escriba` |
-| Linux | `~/.local/share/escriba` |
+En CPU tarda alrededor de 1 h 15 min por hora de audio.
 
-Dentro:
-- `voiceprints/<proyecto>.json`: huellas de voz de personas reales (ver arriba). No las compartas.
-- `glossary.txt`: nombres y términos de tus reuniones; mejora la transcripción en los dos modos.
-- `secrets.env`: claves, una por línea (`ASSEMBLYAI_API_KEY=...`, `HF_TOKEN=...`). Una variable de entorno con el mismo nombre tiene prioridad. Si ya guardas tus claves en otro `.env`, `secrets.env` puede ser un enlace a él: guardar una clave solo cambia su línea.
-- `state.json`: últimos proyectos y carpetas, transcripciones en marcha, dispositivos preferidos, tema e idioma.
+**GPU NVIDIA (experimental):** `escriba install-local --gpu` o `install.ps1 -Gpu` (~5 GB, driver 528+ en Windows, 525+ en Linux). Aún sin probar en hardware real; si la GPU falla, escriba sigue con la CPU. Se agradecen los informes.
 
-Si mueves reuniones a otra carpeta, sus muestras de voz ya no se pueden escuchar. *Reparar rutas* (en *Personas*, o `escriba repair`) las vuelve a encontrar por el nombre del archivo.
+## Datos
 
-## Modo nube (AssemblyAI)
-
-Crea una cuenta en assemblyai.com (las cuentas nuevas traen 50 $ de crédito) y pega la clave en *Ajustes*.
-
-escriba sube una copia en Opus del audio, pasa tu glosario como términos clave y, al acabar, borra la transcripción de AssemblyAI (allí no se queda ni el audio ni el texto). La transcripción y la separación de hablantes se hacen allí; quién es quién se decide en tu PC contra tu librería.
-
-Probado con 3 reuniones reales: más completo y con mejores nombres propios que `medium` en local. Con idioma "auto", una reunión que mezcla gallego y castellano sale en castellano; con "gl" respeta la mezcla, pero en una prueba juntó a dos personas en un solo hablante.
-
-## Modo local (faster-whisper + pyannote)
-
-Es opcional. Instálalo desde *Ajustes* > *Transcribir en este PC*, con `escriba install-local` o con `install.ps1 -Local`: ~1,5 GB de librerías, que se añaden al entorno de escriba sin tocar lo instalado, así que funciona con escriba abierto. Cada modelo de whisper se descarga la primera vez que se usa (`medium`, el de por defecto, ~1,5 GB).
-
-Después, una sola vez:
-
-1. Crea un token en https://hf.co/settings/tokens
-2. Acepta las condiciones en https://hf.co/pyannote/speaker-diarization-3.1 y https://hf.co/pyannote/speaker-diarization-community-1
-3. Pega el token en *Ajustes* (`HF_TOKEN`)
-
-Siempre funciona con prioridad baja, así que el PC sigue fluido mientras trabaja.
-
-### GPU NVIDIA (experimental)
-
-Con una tarjeta NVIDIA, el modo local puede usarla: transcribir y separar hablantes pasa de más de una hora por hora de audio a unos minutos. Al instalar el modo local, escriba ofrece la versión para GPU si encuentra una tarjeta (`nvidia-smi`); si el modo local ya está instalado para CPU, en *Ajustes* hay un botón para cambiar. Por línea de órdenes: `escriba install-local --gpu`, o `install.ps1 -Gpu` en Windows.
-
-- **Es experimental:** los autores no tienen tarjeta NVIDIA y el CI no tiene GPU, así que aún no se ha probado en una de verdad. Si lo pruebas, cuenta cómo ha ido.
-- **Nunca empeora las cosas:** si la GPU falla (driver antiguo, poca memoria, una librería que falta), escriba lo indica en el registro y sigue con la CPU. *Ajustes* > *Solo CPU*, o `escriba transcribe --local --cpu`, la desactiva.
-- **Requisitos:** driver de NVIDIA 528 o posterior en Windows, 525 o posterior en Linux. Las tarjetas AMD e Intel no son compatibles (faster-whisper solo funciona con CUDA).
-- **Tamaño:** ~5 GB en vez de ~1,5 GB. torch se instala para CUDA 12.6, no 13: el motor de faster-whisper (CTranslate2 4.x) necesita cuBLAS 12 y cuDNN 9, que vienen con ese torch.
-
-### Rendimiento (Ryzen 5 5625U, solo CPU)
-
-Medido con 5 minutos de una reunión real (oct 2026):
-
-| Paso | Tiempo |
-|---|---|
-| Transcripción, `medium` (por defecto) | ~114 s |
-| Transcripción, `turbo` | ~93 s |
-| Separación de hablantes (pyannote 3.1) | ~250 s |
-
-`turbo` (large-v3-turbo) acierta más palabras sueltas, pero en las pruebas se saltó una frase entera, se inventó un "Gracias." final y pasó una reunión en gallego a castellano. Por eso `medium` sigue siendo el de por defecto.
-
-La separación de hablantes es el cuello de botella: casi todo su tiempo se va en las huellas de voz. Espaciar sus ventanas (`segmentation.step`) la hace hasta 5 veces más rápida, pero acaba juntando a dos personas en una, así que se deja como está. Transcribir y separar hablantes en paralelo solo gana un 4% y satura la CPU.
-
-## Identificación por voz
-
-Cada proyecto (cliente, equipo...) tiene su propia librería de voces, que se crea al crear el proyecto. Al revisar los hablantes de una transcripción, confirmar o corregir un nombre añade esa muestra a la persona; "No lo sé" no toca la librería.
-
-Las huellas de voz se calculan en tu PC en los dos modos, con el codificador de voz preentrenado de [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) (Apache-2.0) reescrito en numpy (`encoder.py`): da las mismas huellas que el original (comprobado con 158 clips reales, diferencia por debajo de 1e-6) sin torch, con lo que la instalación básica ocupa ~150 MB en vez de ~1,2 GB.
-
-En *Personas* puedes escuchar, mover o borrar muestras, cambiar el nombre de una persona (también en las transcripciones del proyecto; si el nombre nuevo ya existe, se juntan), borrar a una persona, deshacer el último cambio, añadir una muestra a mano, reparar rutas y auditar la librería (avisa de muestras demasiado parecidas entre dos personas, de casi duplicadas y de muestras de la misma persona que no se parecen entre sí).
+Las grabaciones y transcripciones se quedan en la carpeta de cada proyecto. Las bibliotecas de voces, el glosario, las claves y los ajustes están en `%LOCALAPPDATA%\escriba` (Windows) o `~/.local/share/escriba` (Linux).
 
 ## Desarrollo
 
-El código, los comentarios y los nombres están en inglés; ver la sección *Development* del [README en inglés](README.md), con la tabla de módulos y cómo añadir traducciones.
+```bash
+uv venv --python 3.11 .venv
+uv pip install --torch-backend cpu -e ".[local]" pytest
+.venv/bin/python -m pytest
+```
+
+Los textos de la interfaz están en inglés dentro de `_()` y se traducen en `escriba/locales/<idioma>.json`.
+
+Las huellas de voz usan el codificador de voz de [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) (Apache-2.0), reimplementado en numpy.
 
 ## Licencia
 
 Con licencia [Apache 2.0](LICENSE-APACHE) o [MIT](LICENSE-MIT), a tu elección.
-
-Salvo que digas expresamente lo contrario, cualquier contribución que envíes para incluirla en escriba, tal como la define la licencia Apache-2.0, tendrá esta misma doble licencia, sin condiciones adicionales.
