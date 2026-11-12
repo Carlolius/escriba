@@ -1,6 +1,6 @@
 [project]
 name = "escriba"
-version = "0.3.0"
+version = "0.3.1"
 description = "Record, transcribe and identify speakers in meetings, locally or in the cloud"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
