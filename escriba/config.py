@@ -174,14 +174,14 @@ def list_projects():
 
 
 # Not valid in file names on Windows (and "/" nowhere)
-_INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+RESERVED_NAMES = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
 
 
 def clean_name(text):
     """A text made safe as a file name on Windows and Linux: invalid
     characters become "_", no trailing dots or spaces."""
-    text = _INVALID.sub("_", text or "").strip().rstrip(". ")
+    text = INVALID_CHARS.sub("_", text or "").strip().rstrip(". ")
     return "" if text in ("", ".", "..") else text
 
 
@@ -190,7 +190,7 @@ def check_project_name(name):
     name = (name or "").strip()
     if not name:
         raise ValueError(_("The project needs a name"))
-    if clean_name(name) != name or name.lower() in _RESERVED or name.endswith(".audit_ok") or len(name) > 60:
+    if clean_name(name) != name or name.lower() in RESERVED_NAMES or name.endswith(".audit_ok") or len(name) > 60:
         raise ValueError(_("{name} can't be a project name: use letters, numbers, spaces, - or _", name=name))
     return name
 

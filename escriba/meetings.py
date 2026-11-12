@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from . import archive, jobs, voiceprints
+from . import archive, config, jobs, voiceprints
 from .i18n import _
 from .review import SUFFIX
 
@@ -70,23 +70,23 @@ def list_meetings(folder, recording=None, limit=200):
     } for p in newest]
 
 
-FORBIDDEN = set('<>:"/\\|?*')  # not valid in a Windows file name, or a path separator
-
-
-def clean_name(name):
+def check_name(name):
     """The new name without spaces around it nor the audio extension, or a
-    ValueError saying what's wrong with it."""
+    ValueError saying what's wrong with it (same rules as config.clean_name,
+    but saying so instead of changing it)."""
     name = (name or "").strip()
     for ext in AUDIO:
         if name.lower().endswith(ext):
             name = name[:-len(ext)].rstrip()
     if not name or name in (".", ".."):
         raise ValueError(_("Write a name"))
-    bad = sorted(FORBIDDEN & set(name)) or [c for c in name if ord(c) < 32]
+    bad = sorted(set(config.INVALID_CHARS.findall(name)))
     if bad:
         raise ValueError(_("The name can't have {chars}", chars=" ".join(map(repr, bad))))
-    if name.endswith((".", " ")):
+    if name.endswith("."):
         raise ValueError(_("The name can't end with a dot"))
+    if name.lower() in config.RESERVED_NAMES:
+        raise ValueError(_("{name} is a name Windows doesn't allow", name=name))
     return name
 
 
@@ -98,7 +98,7 @@ def rename(audio, new_name, recording=None):
     can't be renamed, the ones already renamed go back. Returns the new
     path of the audio."""
     audio = Path(audio)
-    new_name = clean_name(new_name)
+    new_name = check_name(new_name)
     if new_name == audio.stem:
         return audio
     if recording and audio.resolve() == Path(recording).resolve():

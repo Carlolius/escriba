@@ -79,7 +79,7 @@ def test_rename_meeting_keeps_transcript_and_samples(meeting):
 def test_rename_meeting_refuses(meeting, wav, monkeypatch):
     audio, _sidecar, _txt = meeting
     wav("taken.wav")
-    for bad in ("", "  ", "a/b", "what?", "dots."):
+    for bad in ("", "  ", "a/b", "what?", "dots.", "nul", "tab\there"):
         with pytest.raises(ValueError):
             meetings.rename(audio, bad)
     with pytest.raises(FileExistsError):

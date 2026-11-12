@@ -615,5 +615,7 @@
  "Can't rename {name}: it's open in another program ({error})": "No se puede renombrar {name}: está abierto en otro programa ({error})",
  "New name": "Nombre nuevo",
  "The transcript and the voice samples taken from it keep working.": "La transcripción y las muestras de voz sacadas de ella siguen funcionando.",
- "Renamed to {name}": "Renombrada a {name}"
+ "Renamed to {name}": "Renombrada a {name}",
+ "Escriba closed.": "Escriba cerrado.",
+ "{name} is a name Windows doesn't allow": "Windows no admite el nombre {name}"
 }

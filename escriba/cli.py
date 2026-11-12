@@ -295,7 +295,13 @@ def main(argv=None):
         i18n.set_language(lang)
         config.update_state(language=lang)
     args = parser().parse_args(argv)
-    if not args.command:
-        from . import menu
-        return menu.main()
-    return args.func(args)
+    try:
+        if not args.command:
+            from . import menu
+            return menu.main()
+        return args.func(args)
+    except KeyboardInterrupt:
+        # Ctrl+C is the normal way to close it: whatever was running already
+        # stopped cleanly (a recording keeps its WAV), no traceback to show
+        print("\n" + _("Escriba closed."))
+        return 130
