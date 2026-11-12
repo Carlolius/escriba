@@ -5,7 +5,7 @@ from nicegui import run, ui
 
 from .. import repair, review, voiceprints
 from ..i18n import N_, _, _n
-from .common import choose_path, confirm, frame, no_project, player, project_dir
+from .common import NameField, choose_path, confirm, frame, no_project, player, project_dir
 
 EXPLANATION = {
     "confusion": N_("Two people with very similar samples: risk of mixing them up. Listen to both: if a sample "
@@ -51,6 +51,7 @@ def page():
 
 
     skipped = set()  # findings dismissed during this visit
+    opened = set()   # people unfolded, so they stay open when the list is redrawn
 
     async def reload():
         p = current
@@ -66,7 +67,9 @@ def page():
                     .classes("soft-text")
             for name, samples in sorted(data.items(), key=lambda x: x[0].lower()):
                 with ui.expansion(_n("{name} ({n} sample)", "{name} ({n} samples)", len(samples), name=name),
-                                  icon="person").classes("w-full"):
+                                  icon="person", value=name in opened,
+                                  on_value_change=lambda e, n=name: (opened.add if e.value else opened.discard)(n)) \
+                        .classes("w-full"):
                     for s in samples:
                         with ui.row().classes("w-full items-center gap-2 py-1 line-below"):
                             ui.label(_label(s)).classes("text-sm grow break-all")
@@ -130,34 +133,38 @@ def page():
     async def move(p, name, sample_id, data, suggestion=""):
         with ui.dialog() as d, ui.card().classes("w-96 max-w-full"):
             ui.label(_("This sample is under {name}. Whose is it?", name=name))
-            new = ui.input(_("Person"), value=suggestion, autocomplete=sorted(data)).classes("w-full")
+            new = NameField(_("Person"), data, suggestion).classes("w-full")
             with ui.row().classes("w-full justify-end"):
                 ui.button(_("Cancel"), on_click=lambda: d.submit(None)).props("flat")
-                ui.button(_("Move"), on_click=lambda: d.submit((new.value or "").strip()))
+                ui.button(_("Move"), on_click=lambda: d.submit(new.value))
         await move_to(p, name, sample_id, await d)
 
     async def move_to(p, name, sample_id, target):
         if target and target != name:
             await run.io_bound(voiceprints.move_sample, p, name, sample_id, target)
             ui.notify(_("Moved to {name}", name=target), type="positive")
+            opened.add(target)  # the sample is now there: show it
             await reload()
 
     async def rename(p, name, data):
         with ui.dialog() as d, ui.card().classes("w-96 max-w-full"):
             ui.label(_("New name for {name}", name=name)).classes("font-medium")
-            new = ui.input(_("Name"), value=name, autocomplete=sorted(data)).classes("w-full")
-            merge = ui.label().classes("text-sm text-orange-9")
+            merge = None
+            new = NameField(_("Name"), data, name, on_change=lambda v: merge.set_text(
+                _("{name} already exists: their samples will be joined (same person).", name=v)
+                if v and v != name and v in data else "")).classes("w-full")
+            merge = ui.label().classes("text-sm text-warning")
             everywhere = ui.checkbox(_("Also change it in this project's transcripts"), value=True)
-            new.on_value_change(lambda e: merge.set_text(
-                _("{name} already exists: their samples will be joined (same person).", name=e.value.strip())
-                if e.value and e.value.strip() != name and e.value.strip() in data else ""))
             with ui.row().classes("w-full justify-end"):
                 ui.button(_("Cancel"), on_click=lambda: d.submit(None)).props("flat")
-                ui.button(_("Rename"), on_click=lambda: d.submit((new.value or "").strip()))
+                ui.button(_("Rename"), on_click=lambda: d.submit(new.value))
         target = await d
         if not target or target == name:
             return
         await run.io_bound(voiceprints.rename_person, p, name, target)
+        if name in opened:
+            opened.discard(name)
+            opened.add(target)
         text = _("{old} is now {new}", old=name, new=target)
         if everywhere.value:
             n = await run.io_bound(review.rename_in_transcripts, p, name, target)
@@ -223,19 +230,18 @@ def page():
             with ui.row().classes("w-full"):
                 start = ui.number(_("From (s)"), min=0, value=0).classes("w-24")
                 end = ui.number(_("To (s)"), min=0, value=10).classes("w-24")
-            name = ui.input(_("Person"), autocomplete=sorted(voiceprints.load_library(current))) \
-                .classes("w-full")
+            name = NameField(_("Person"), voiceprints.load_samples(current)).classes("w-full")
             with ui.row().classes("w-full justify-end"):
                 ui.button(_("Cancel"), on_click=lambda: d.submit(False)).props("flat")
                 ui.button(_("Add"), on_click=lambda: d.submit(True))
-        if not await d or not (name.value or "").strip():
+        if not await d or not name.value:
             return
         begin, finish = float(start.value or 0), float(end.value or 0)
         if finish <= begin:
             ui.notify(_("The end must come after the start"), type="warning")
             return
         try:
-            n, added = await run.io_bound(review.enroll, path, begin, finish, name.value.strip(), current)
+            n, added = await run.io_bound(review.enroll, path, begin, finish, name.value, current)
         except Exception as e:
             ui.notify(_("Can't add it: {error}", error=e), type="negative", multi_line=True)
             return

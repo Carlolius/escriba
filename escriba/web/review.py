@@ -3,7 +3,7 @@ from nicegui import run, ui
 
 from .. import review
 from ..i18n import _, _n
-from .common import frame, no_project, player, set_project, title
+from .common import NameField, frame, no_project, player, set_project, title
 
 
 @ui.page("/review")
@@ -145,15 +145,14 @@ def _card(spk, info, quotes, known, decide):
         if reviewed:
             return
         with ui.row().classes("w-full items-end gap-2"):
-            name = ui.input(_("Who is it?"), value="" if unnamed else info["name"], autocomplete=known) \
-                .classes("grow")
-            name.on("keydown.enter", lambda: confirm())
+            name = NameField(_("Who is it?"), known, "" if unnamed else info["name"]).classes("grow") \
+                .on_enter(lambda: confirm())
             ui.button(_("Confirm"), icon="check", on_click=lambda: confirm())
             ui.button(_("I don't know"), on_click=lambda: decide(spk, "")).props("flat no-caps") \
                 .tooltip(_("Marked as reviewed without saving anything in the voice library"))
 
     async def confirm():
-        value = (name.value or "").strip()
+        value = name.value
         if not value:
             ui.notify(_("Type who it is, or press «I don't know»"), type="warning")
             return

@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from . import jobs, voiceprints
+from . import archive, jobs, voiceprints
 from .i18n import _
 from .review import SUFFIX
 
@@ -68,6 +68,62 @@ def list_meetings(folder, recording=None, limit=200):
         "duration": audio_util.duration(p),
         "archived": p.suffix.lower() == ".opus",
     } for p in newest]
+
+
+FORBIDDEN = set('<>:"/\\|?*')  # not valid in a Windows file name, or a path separator
+
+
+def clean_name(name):
+    """The new name without spaces around it nor the audio extension, or a
+    ValueError saying what's wrong with it."""
+    name = (name or "").strip()
+    for ext in AUDIO:
+        if name.lower().endswith(ext):
+            name = name[:-len(ext)].rstrip()
+    if not name or name in (".", ".."):
+        raise ValueError(_("Write a name"))
+    bad = sorted(FORBIDDEN & set(name)) or [c for c in name if ord(c) < 32]
+    if bad:
+        raise ValueError(_("The name can't have {chars}", chars=" ".join(map(repr, bad))))
+    if name.endswith((".", " ")):
+        raise ValueError(_("The name can't end with a dot"))
+    return name
+
+
+def rename(audio, new_name, recording=None):
+    """Renames the meeting: its audio (WAV and/or Opus), .txt, .speakers.json
+    and transcription log, and updates the voice samples taken from it so
+    they can still be played. Refuses while it's being recorded or
+    transcribed, or if a file with the new name is already there. If a file
+    can't be renamed, the ones already renamed go back. Returns the new
+    path of the audio."""
+    audio = Path(audio)
+    new_name = clean_name(new_name)
+    if new_name == audio.stem:
+        return audio
+    if recording and audio.resolve() == Path(recording).resolve():
+        raise RuntimeError(_("{name} is being recorded: stop it first", name=audio.stem))
+    if str(audio.resolve()) in jobs.running_audio():
+        raise RuntimeError(_("{name} is being transcribed: wait until it ends", name=audio.stem))
+    moves = [(p, p.with_name(new_name + p.name[len(audio.stem):])) for p in files_of(audio)]
+    for old, new in moves:
+        # Only changing upper/lower case: on Windows and macOS it's the same file
+        if new.exists() and not (new.name.lower() == old.name.lower() and new.samefile(old)):
+            raise FileExistsError(_("There's already a meeting called {name} here", name=new_name))
+    done = []
+    try:
+        for old, new in moves:
+            old.rename(new)
+            done.append((old, new))
+    except OSError as e:
+        for old, new in reversed(done):
+            new.rename(old)
+        raise RuntimeError(_("Can't rename {name}: it's open in another program ({error})",
+                             name=old.name, error=e)) from e
+    for old, new in done:
+        if old.suffix.lower() in AUDIO:
+            archive.update_paths(old, new)
+    return audio.with_name(new_name + audio.suffix)
 
 
 def delete(audio, delete_samples=False):

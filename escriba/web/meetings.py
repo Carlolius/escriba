@@ -78,8 +78,10 @@ def page():
                             ui.menu_item(_("Review speakers"), on_click=lambda: ui.navigate.to("/review"))
                         if audio.with_suffix(".txt").exists():
                             ui.menu_item(_("See transcript"), on_click=lambda: show_transcript(audio))
+                        renaming = ui.menu_item(_("Rename..."), on_click=lambda: rename(audio))
                         item = ui.menu_item(_("Delete..."), on_click=lambda: delete(audio))
                         if busy:
+                            renaming.disable()
                             item.disable()
             if m["status"] != "recording":
                 file_player(audio, m["duration"])
@@ -95,6 +97,29 @@ def page():
             ui.label(text).classes("whitespace-pre-wrap text-sm max-h-[60vh] overflow-auto")
             ui.button(_("Close"), on_click=d.close).props("flat")
         d.open()
+
+    async def rename(audio):
+        with ui.dialog() as d, ui.card().classes("w-[30rem] max-w-full gap-2"):
+            ui.label(_("Rename {name}", name=audio.stem)).classes("text-lg font-medium break-all")
+            name = ui.input(_("New name"), value=audio.stem).classes("w-full").props("autofocus")
+            name.on("keydown.enter", lambda: d.submit(name.value))
+            ui.label(_("The transcript and the voice samples taken from it keep working.")) \
+                .classes("text-sm soft-text")
+            with ui.row().classes("w-full justify-end"):
+                ui.button(_("Cancel"), on_click=lambda: d.submit(None)).props("flat")
+                ui.button(_("Rename"), icon="edit", on_click=lambda: d.submit(name.value))
+        new_name = await d
+        if new_name is None:
+            return
+        recording = STATE["recording"].target if STATE["recording"] else None
+        try:
+            new = await run.io_bound(meetings.rename, audio, new_name, recording)
+        except (ValueError, RuntimeError, OSError) as e:
+            ui.notify(str(e), type="negative", multi_line=True)
+            return
+        if new != audio:
+            ui.notify(_("Renamed to {name}", name=new.stem), type="positive")
+            await load()
 
     async def delete(audio):
         files = meetings.files_of(audio)

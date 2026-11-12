@@ -379,6 +379,45 @@ def _item(text, icon, action):
         ui.item_section(text)
 
 
+class NameField:
+    """A person's name: a dropdown with the names already known that also
+    takes a new one. Clicking it lists every name, even when it comes filled
+    in with a suggestion; typing filters them. .text is what's written in
+    it, chosen from the list or typed (a typed name counts without pressing
+    Enter)."""
+
+    def __init__(self, label, names, value="", on_change=None):
+        names = sorted(set(names) | ({value} if value else set()), key=str.casefold)
+        self.text = value or ""
+        self._on_change = on_change
+        self.select = ui.select(names, label=label, value=value or None, new_value_mode="add-unique") \
+            .props("clearable")
+        self.select.on("input-value", lambda e: self._set(e.args))
+        self.select.on_value_change(lambda e: self._set(e.value))
+        # With a suggestion in the box, opening the list would filter it down to
+        # that one name: the input is emptied on focus (the name is still selected
+        # and comes back on blur), so the whole list shows
+        self.select.on("focus", js_handler=f"() => getHtmlElement({self.select.id})"
+                       f".querySelector('input')?.select()")
+
+    def _set(self, text):
+        self.text = text or ""
+        if self._on_change:
+            self._on_change(self.value)
+
+    def classes(self, add):
+        self.select.classes(add)
+        return self
+
+    def on_enter(self, handler):
+        self.select.on("keydown.enter", handler)
+        return self
+
+    @property
+    def value(self):
+        return self.text.strip()
+
+
 async def confirm(question):
     with ui.dialog() as d, ui.card():
         ui.label(question)

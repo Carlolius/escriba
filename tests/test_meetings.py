@@ -2,6 +2,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from conftest import emb
 from escriba import config, jobs, meetings, review, voiceprints
@@ -57,3 +58,35 @@ def test_progress_info(tmp_path):
     assert (info["engine"], info["step"], info["pct"]) == ("cloud", "upload", 35)
     log.write_text("", encoding="utf-8")
     assert jobs.progress_info(log, "cloud")["step"] == "compress"
+
+
+def test_rename_meeting_keeps_transcript_and_samples(meeting):
+    audio, sidecar, txt = meeting
+    log = audio.with_name(audio.stem + "_transcribe.log")
+    log.write_text("done", encoding="utf-8")
+    voiceprints.add_sample("test", "Ana", emb(1), origin={"audio": str(audio), "start": 0.0, "end": 2.0})
+    new = meetings.rename(audio, "  Weekly v1.2.wav ")
+    assert new == audio.with_name("Weekly v1.2.wav") and new.exists()
+    assert sorted(p.name for p in meetings.files_of(new)) == [
+        "Weekly v1.2.speakers.json", "Weekly v1.2.txt", "Weekly v1.2.wav", "Weekly v1.2_transcribe.log"]
+    assert not any(p.exists() for p in (audio, sidecar, txt, log))
+    assert voiceprints.samples_from_audio(new) == {"test": 1}
+    clusters = json.loads(new.with_suffix(".speakers.json").read_text(encoding="utf-8"))["clusters"]
+    assert {c["origin"]["audio"] for c in clusters.values()} == {str(new.resolve())}
+    assert meetings.list_meetings(new.parent)[0]["status"] == "to_review"
+
+
+def test_rename_meeting_refuses(meeting, wav, monkeypatch):
+    audio, _sidecar, _txt = meeting
+    wav("taken.wav")
+    for bad in ("", "  ", "a/b", "what?", "dots."):
+        with pytest.raises(ValueError):
+            meetings.rename(audio, bad)
+    with pytest.raises(FileExistsError):
+        meetings.rename(audio, "taken")
+    with pytest.raises(RuntimeError):
+        meetings.rename(audio, "other", recording=audio)
+    monkeypatch.setattr(jobs, "running_audio", lambda: {str(audio.resolve())})
+    with pytest.raises(RuntimeError):
+        meetings.rename(audio, "other")
+    assert meetings.rename(audio, "meeting") == audio and audio.exists()
